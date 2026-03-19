@@ -92,6 +92,11 @@ try {
             echo json_encode(handle_save_prompt());
             break;
 
+        case 'reset_prompt_default':
+            confirm_sesskey();
+            echo json_encode(handle_reset_prompt_default());
+            break;
+
         default:
             http_response_code(400);
             echo json_encode(['error' => true, 'message' => 'Unknown action.']);
@@ -313,7 +318,37 @@ function handle_forum_config(): array {
 }
 
 /**
- * Handle 'save_prompt' action — save a course-level prompt override.
+ * Handle 'reset_prompt_default' action — return the plugin's shipped default
+ * prompt text so the admin settings page JS can load it into the textarea.
+ *
+ * The admin still needs to submit the settings form to persist the value.
+ * This action only reads the file; it does not write to the database.
+ *
+ * @return array JSON-serialisable response.
+ */
+function handle_reset_prompt_default(): array {
+    global $CFG;
+
+    $context = context_system::instance();
+    require_capability('local/lid:managesitesettings', $context);
+
+    $filepath = $CFG->dirroot . '/local/lid/prompts/default-session-analyzer.md';
+
+    if (!file_exists($filepath)) {
+        throw new \moodle_exception('filenotfound', 'error', '', 'default-session-analyzer.md');
+    }
+
+    $prompt = file_get_contents($filepath);
+    if ($prompt === false || trim($prompt) === '') {
+        throw new \moodle_exception('invaliddata', 'error', '', 'Default prompt file is empty.');
+    }
+
+    return [
+        'success' => true,
+        'prompt'  => trim($prompt),
+    ];
+}
+
  *
  * @return array JSON-serialisable response.
  */
@@ -339,6 +374,16 @@ function handle_save_prompt(): array {
     $prompt = trim($prompt);
     if (empty($prompt)) {
         throw new \moodle_exception('invaliddata', 'error', '', 'Prompt cannot be empty.');
+    }
+
+    // Sentinel value sent by prompt_editor.js reset-to-site-default button.
+    // Deletes the course-level override row so the course falls back to the site prompt.
+    if ($prompt === '__RESET_TO_SITE_DEFAULT__') {
+        $DB->delete_records('local_lid_settings', ['courseid' => $courseid]);
+        return [
+            'success' => true,
+            'message' => get_string('prompt_saved', 'local_lid'),
+        ];
     }
 
     // Upsert course-level settings row.
