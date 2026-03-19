@@ -1,7 +1,8 @@
 {{!
     Student LID profile tab page.
-
     Context: see classes/output/student_lid_page.php::export_for_template()
+    All analysis cards and status badges arrive as pre-rendered HTML.
+    Output with {{{ }}} to avoid escaping.
 }}
 {{> local_lid/lid_styles}}
 
@@ -31,7 +32,7 @@
     </div>
     {{/stale_notice}}
 
-    {{! ── No data state ───────────────────────────────────────────────── }}
+    {{! ── No data empty state ─────────────────────────────────────────── }}
     {{^has_data}}
     <div class="lid-empty-state">
         <div class="lid-empty-icon">📊</div>
@@ -42,8 +43,8 @@
 
     {{#has_data}}
 
-    {{! ── View tabs: Aggregate / Per-forum ───────────────────────────── }}
-    <div class="lid-forum-tabs" role="tablist">
+    {{! ── View tabs ───────────────────────────────────────────────────── }}
+    <div class="lid-forum-tabs" id="lid-student-tabs" role="tablist">
         <button class="lid-forum-tab lid-forum-tab-active"
                 role="tab" aria-selected="true"
                 aria-controls="lid-student-aggregate"
@@ -64,7 +65,7 @@
     {{! ── Cross-forum aggregate panel ───────────────────────────────── }}
     <div class="lid-tab-panel" id="lid-student-aggregate" role="tabpanel">
         {{#has_aggregate}}
-        {{> local_lid/analysis_card aggregate_json}}
+        {{{aggregate_html}}}
         {{/has_aggregate}}
         {{^has_aggregate}}
         <div class="lid-notice lid-notice-info">
@@ -91,9 +92,9 @@
             </a>
         </div>
 
-        {{! Student-forum aggregate }}
+        {{! Student-forum aggregate card }}
         {{#has_student_lid}}
-        {{> local_lid/analysis_card student_json}}
+        {{{student_html}}}
         {{/has_student_lid}}
         {{^has_student_lid}}
         <div class="lid-notice lid-notice-info">
@@ -101,14 +102,14 @@
         </div>
         {{/has_student_lid}}
 
-        {{! Individual post analyses accordion }}
+        {{! Individual posts accordion }}
         <div class="lid-posts-section">
-            <button class="lid-toggle-posts lid-btn lid-btn-ghost lid-btn-full"
+            <button class="lid-btn lid-btn-ghost lid-btn-full lid-js-toggle-posts"
                     aria-expanded="false"
-                    aria-controls="lid-student-posts-{{forumid}}">
+                    aria-controls="lid-student-posts-{{forumid}}"
+                    data-target="lid-student-posts-{{forumid}}">
                 ▼ {{#str}}dashboard_student_viewpost, local_lid{{/str}} ({{post_count}})
             </button>
-
             <div class="lid-student-posts lid-student-posts-hidden"
                  id="lid-student-posts-{{forumid}}">
                 {{#posts}}
@@ -119,12 +120,12 @@
                             <span class="lid-mono lid-muted" style="font-size:10px">{{posted_date}}</span>
                         </div>
                         <div class="lid-post-actions">
-                            {{> local_lid/status_badge}}
+                            {{{status_html}}}
                         </div>
                     </div>
                     {{#has_analysis}}
                     <div class="lid-post-card-wrapper">
-                        {{> local_lid/analysis_card analysis_json compact=true show_portfolio=false show_timeline=false}}
+                        {{{analysis_html}}}
                     </div>
                     {{/has_analysis}}
                 </div>
@@ -137,7 +138,7 @@
 
     {{/has_data}}
 
-</div>{{! end .lid-page }}
+</div>
 
 <script>
 require(['local_lid/dashboard'], function(Dashboard) {
