@@ -1,0 +1,242 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<XMLDB PATH="local/lid/db" VERSION="20260320" COMMENT="XMLDB file for Moodle local/lid"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:noNamespaceSchemaLocation="../../../lib/xmldb/xmldb.xsd">
+  <TABLES>
+
+    <!--
+    =========================================================================
+    local_lid_settings
+    =========================================================================
+    Stores LLM connection details and the prompt template at two scopes:
+
+      courseid = 0  → site-level default (written on plugin install from
+                       prompts/default-session-analyzer.md; one row always
+                       exists after install)
+      courseid > 0  → course-level override (created when a teacher saves
+                       a customised prompt for their course)
+
+    The prompt_locked flag is only meaningful on the site-level row
+    (courseid = 0). When prompt_locked = 1, the prompt editor renders
+    read-only for all roles below Site Administrator regardless of the
+    local/lid:editprompt capability.
+    =========================================================================
+    -->
+    <TABLE NAME="local_lid_settings" COMMENT="LLM connection config and prompt template per site/course scope">
+      <FIELDS>
+        <FIELD NAME="id" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="true"
+               COMMENT="Primary key"/>
+        <FIELD NAME="courseid" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0"
+               COMMENT="0 = site-level default; positive integer = course-level override"/>
+        <FIELD NAME="llm_endpoint" TYPE="char" LENGTH="512" NOTNULL="false"
+               COMMENT="LLM API endpoint URL; inherits from site level when null at course level"/>
+        <FIELD NAME="llm_apikey" TYPE="char" LENGTH="512" NOTNULL="false"
+               COMMENT="Encrypted LLM API key; inherits from site level when null at course level"/>
+        <FIELD NAME="llm_model" TYPE="char" LENGTH="128" NOTNULL="false"
+               COMMENT="Model string passed in API request body (e.g. claude-sonnet-4-6)"/>
+        <FIELD NAME="llm_maxtokens" TYPE="int" LENGTH="6" NOTNULL="false" DEFAULT="4096"
+               COMMENT="max_tokens value passed to the LLM API"/>
+        <FIELD NAME="llm_timeout" TYPE="int" LENGTH="5" NOTNULL="false" DEFAULT="60"
+               COMMENT="HTTP request timeout in seconds"/>
+        <FIELD NAME="prompt_template" TYPE="text" NOTNULL="false"
+               COMMENT="Full session analyzer prompt template. Site level: pre-populated from prompts/default-session-analyzer.md on install. Course level: instructor override."/>
+        <FIELD NAME="prompt_locked" TYPE="int" LENGTH="1" NOTNULL="true" DEFAULT="0"
+               COMMENT="Site-level only. 1 = teachers cannot edit prompt at course or forum level; 0 = editing permitted per local/lid:editprompt capability"/>
+        <FIELD NAME="trigger_async" TYPE="int" LENGTH="1" NOTNULL="true" DEFAULT="1"
+               COMMENT="1 = queue analysis immediately on post submission (picked up at next cron run)"/>
+        <FIELD NAME="trigger_cron" TYPE="int" LENGTH="1" NOTNULL="true" DEFAULT="1"
+               COMMENT="1 = scheduled task drains queue on configured interval"/>
+        <FIELD NAME="trigger_manual" TYPE="int" LENGTH="1" NOTNULL="true" DEFAULT="1"
+               COMMENT="1 = teachers can manually trigger analysis via UI"/>
+        <FIELD NAME="cron_interval" TYPE="int" LENGTH="5" NOTNULL="true" DEFAULT="5"
+               COMMENT="Minimum minutes between scheduled task runs (maps to task customised field). Range 1-1440."/>
+        <FIELD NAME="cron_batchsize" TYPE="int" LENGTH="5" NOTNULL="true" DEFAULT="10"
+               COMMENT="Maximum number of queue items processed per scheduled task run"/>
+        <FIELD NAME="timecreated" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0"/>
+        <FIELD NAME="timemodified" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0"/>
+      </FIELDS>
+      <KEYS>
+        <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
+      </KEYS>
+      <INDEXES>
+        <INDEX NAME="courseid" UNIQUE="true" FIELDS="courseid"
+               COMMENT="One settings row per scope; unique on courseid enforces this"/>
+      </INDEXES>
+    </TABLE>
+
+    <!--
+    =========================================================================
+    local_lid_forum_config
+    =========================================================================
+    Per-forum enable/disable toggle and optional forum-level prompt override.
+
+    When enabled = 0, no analysis is queued for posts in this forum and no
+    LID tab or dashboard surfaces are shown for it.
+
+    prompt_override is only used when the site admin has NOT locked the
+    prompt (prompt_locked = 0 in local_lid_settings for courseid = 0).
+    When null, the active prompt resolves via: forum override → course
+    override → site default.
+    =========================================================================
+    -->
+    <TABLE NAME="local_lid_forum_config" COMMENT="Per-forum LID enable/disable and optional prompt override">
+      <FIELDS>
+        <FIELD NAME="id" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="true"
+               COMMENT="Primary key"/>
+        <FIELD NAME="forumid" TYPE="int" LENGTH="10" NOTNULL="true"
+               COMMENT="Foreign key to forum.id"/>
+        <FIELD NAME="courseid" TYPE="int" LENGTH="10" NOTNULL="true"
+               COMMENT="Denormalised course id for efficient course-level queries"/>
+        <FIELD NAME="enabled" TYPE="int" LENGTH="1" NOTNULL="true" DEFAULT="0"
+               COMMENT="1 = LID analysis active for this forum; 0 = disabled (no analysis, no dashboards)"/>
+        <FIELD NAME="prompt_override" TYPE="text" NOTNULL="false"
+               COMMENT="Forum-level prompt override. Null = use course or site prompt. Only honoured when prompt_locked = 0."/>
+        <FIELD NAME="timecreated" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0"/>
+        <FIELD NAME="timemodified" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0"/>
+      </FIELDS>
+      <KEYS>
+        <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
+        <KEY NAME="fk_forumid" TYPE="foreign" FIELDS="forumid" REFTABLE="forum" REFFIELDS="id"/>
+        <KEY NAME="fk_courseid" TYPE="foreign" FIELDS="courseid" REFTABLE="course" REFFIELDS="id"/>
+      </KEYS>
+      <INDEXES>
+        <INDEX NAME="forumid_unique" UNIQUE="true" FIELDS="forumid"
+               COMMENT="One config row per forum"/>
+        <INDEX NAME="courseid" UNIQUE="false" FIELDS="courseid"
+               COMMENT="Fast lookup of all configured forums in a course"/>
+      </INDEXES>
+    </TABLE>
+
+    <!--
+    =========================================================================
+    local_lid_analysis
+    =========================================================================
+    Stores every LID analysis result. One row per unit of analysis.
+
+    scope values:
+      'post'          — analysis of a single forum post
+      'forum'         — mathematical aggregate of all post analyses in a forum
+      'student_forum' — mathematical aggregate of one student's post analyses
+                        within a single forum
+      'course'        — mathematical aggregate across all enabled forums
+                        in a course
+
+    For post scope:   forumid, discussionid, postid, userid all populated.
+    For forum scope:  forumid populated; discussionid, postid, userid null.
+    For student_forum: forumid and userid populated; discussionid, postid null.
+    For course scope: only courseid populated; all others null.
+
+    Aggregate rows (non-post scope) are recomputed by the aggregator whenever
+    a new post-scope analysis completes. They are never sent to the LLM —
+    they are derived entirely from post-scope rows.
+
+    analysis_json holds the full LID Schema v1.0 JSON object as returned
+    (and validated) from the LLM, or as computed by the aggregator.
+    =========================================================================
+    -->
+    <TABLE NAME="local_lid_analysis" COMMENT="LID analysis results for posts and aggregate scopes">
+      <FIELDS>
+        <FIELD NAME="id" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="true"
+               COMMENT="Primary key"/>
+        <FIELD NAME="scope" TYPE="char" LENGTH="20" NOTNULL="true"
+               COMMENT="Analysis unit: post | forum | student_forum | course"/>
+        <FIELD NAME="courseid" TYPE="int" LENGTH="10" NOTNULL="true"
+               COMMENT="Course this analysis belongs to"/>
+        <FIELD NAME="forumid" TYPE="int" LENGTH="10" NOTNULL="false"
+               COMMENT="Forum id; null for course-scope rows"/>
+        <FIELD NAME="discussionid" TYPE="int" LENGTH="10" NOTNULL="false"
+               COMMENT="Forum discussion id; populated for post-scope only"/>
+        <FIELD NAME="postid" TYPE="int" LENGTH="10" NOTNULL="false"
+               COMMENT="Forum post id; populated for post-scope only"/>
+        <FIELD NAME="userid" TYPE="int" LENGTH="10" NOTNULL="false"
+               COMMENT="Moodle user id of the post author; null for forum and course scope aggregates"/>
+        <FIELD NAME="analysis_json" TYPE="text" NOTNULL="false"
+               COMMENT="Full LID Schema v1.0 JSON. Null while status is pending or processing."/>
+        <FIELD NAME="schema_version" TYPE="char" LENGTH="10" NOTNULL="true" DEFAULT="1.0"
+               COMMENT="LID schema version of the stored JSON; used by the dashboard parser for compatibility checks"/>
+        <FIELD NAME="status" TYPE="char" LENGTH="20" NOTNULL="true" DEFAULT="pending"
+               COMMENT="pending | processing | complete | error"/>
+        <FIELD NAME="error_message" TYPE="text" NOTNULL="false"
+               COMMENT="Error detail when status = error; null on success"/>
+        <FIELD NAME="llm_model" TYPE="char" LENGTH="128" NOTNULL="false"
+               COMMENT="Model string actually used for this analysis (snapshot at time of call)"/>
+        <FIELD NAME="prompt_hash" TYPE="char" LENGTH="64" NOTNULL="false"
+               COMMENT="SHA-256 hash of the prompt used; allows detection of stale analyses when prompt changes"/>
+        <FIELD NAME="timecreated" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0"/>
+        <FIELD NAME="timemodified" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0"/>
+      </FIELDS>
+      <KEYS>
+        <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
+        <KEY NAME="fk_courseid" TYPE="foreign" FIELDS="courseid" REFTABLE="course" REFFIELDS="id"/>
+        <KEY NAME="fk_userid" TYPE="foreign" FIELDS="userid" REFTABLE="user" REFFIELDS="id"/>
+      </KEYS>
+      <INDEXES>
+        <INDEX NAME="scope_course" UNIQUE="false" FIELDS="scope, courseid"
+               COMMENT="Course-scope aggregate lookup"/>
+        <INDEX NAME="scope_forum" UNIQUE="false" FIELDS="scope, forumid"
+               COMMENT="Forum-scope aggregate lookup"/>
+        <INDEX NAME="scope_student_forum" UNIQUE="false" FIELDS="scope, forumid, userid"
+               COMMENT="Student-forum aggregate lookup"/>
+        <INDEX NAME="postid" UNIQUE="false" FIELDS="postid"
+               COMMENT="Direct post-scope lookup by post id"/>
+        <INDEX NAME="status" UNIQUE="false" FIELDS="status"
+               COMMENT="Queue drain: find all pending/processing rows efficiently"/>
+      </INDEXES>
+    </TABLE>
+
+    <!--
+    =========================================================================
+    local_lid_queue
+    =========================================================================
+    Analysis job queue. Every triggering event (post submission, teacher
+    manual request) writes a row here. The scheduled task drains it.
+
+    priority values:
+      1 — manual teacher request (highest; drain first)
+      2 — async (immediate on post submission)
+      3 — cron batch (lowest)
+
+    timevisible: the task will not pick up a row before this Unix timestamp.
+    Async mode: timevisible = time of post submission (pick up at next run).
+    Cron batch: timevisible = next scheduled batch time.
+    Manual:     timevisible = now (pick up immediately at next run).
+
+    attempts: incremented on each failed LLM call. Rows with attempts >= 3
+    and status = 'error' are not retried; they surface in the admin report.
+
+    analysisid links to local_lid_analysis so the task knows which row
+    to update when the LLM call completes.
+    =========================================================================
+    -->
+    <TABLE NAME="local_lid_queue" COMMENT="Analysis job queue drained by the scheduled task">
+      <FIELDS>
+        <FIELD NAME="id" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="true"
+               COMMENT="Primary key"/>
+        <FIELD NAME="analysisid" TYPE="int" LENGTH="10" NOTNULL="true"
+               COMMENT="Foreign key to local_lid_analysis.id"/>
+        <FIELD NAME="priority" TYPE="int" LENGTH="1" NOTNULL="true" DEFAULT="2"
+               COMMENT="1 = manual (high), 2 = async, 3 = cron batch"/>
+        <FIELD NAME="attempts" TYPE="int" LENGTH="3" NOTNULL="true" DEFAULT="0"
+               COMMENT="Number of LLM call attempts made for this job. Max 3 before marking as failed."/>
+        <FIELD NAME="timecreated" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0"
+               COMMENT="Unix timestamp when this queue item was created"/>
+        <FIELD NAME="timevisible" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0"
+               COMMENT="Earliest Unix timestamp at which this item may be picked up by the scheduled task"/>
+        <FIELD NAME="timeclaimed" TYPE="int" LENGTH="10" NOTNULL="false"
+               COMMENT="Unix timestamp when the scheduled task claimed this item for processing; null if unclaimed"/>
+      </FIELDS>
+      <KEYS>
+        <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
+        <KEY NAME="fk_analysisid" TYPE="foreign" FIELDS="analysisid"
+             REFTABLE="local_lid_analysis" REFFIELDS="id"/>
+      </KEYS>
+      <INDEXES>
+        <INDEX NAME="priority_timevisible" UNIQUE="false" FIELDS="priority, timevisible"
+               COMMENT="Task drain query: ORDER BY priority ASC, timevisible ASC with timevisible filter"/>
+        <INDEX NAME="analysisid" UNIQUE="false" FIELDS="analysisid"
+               COMMENT="Fast lookup of queue state for a given analysis row"/>
+      </INDEXES>
+    </TABLE>
+
+  </TABLES>
+</XMLDB>
