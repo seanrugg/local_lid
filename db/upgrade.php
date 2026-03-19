@@ -19,6 +19,10 @@
  *
  * Version history:
  *   2026032000 — Initial release. Tables created by install.xml; no upgrade steps.
+ *   2026032001 — LID Schema v1.1 support. Adds cognitive_performance_index to
+ *                analysis output. No DB schema changes required — the new field
+ *                is stored within the existing analysis_json TEXT column.
+ *                Default prompt updated to v1.2 rubric prompt.
  *
  * When adding a new upgrade step:
  *   1. Increment $plugin->version in version.php (e.g. 2026032001).
