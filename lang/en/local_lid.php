@@ -211,6 +211,7 @@ $string['error_llm_request_failed']    = 'LLM API request failed: {$a}';
 $string['error_llm_invalid_json']      = 'The LLM returned a response that could not be parsed as valid LID JSON. The raw response has been logged.';
 $string['error_llm_schema_mismatch']   = 'The LLM response did not conform to LID Schema v{$a}. Required fields may be missing or malformed.';
 $string['error_llm_truncated']         = 'The LLM response appears to have been truncated before the JSON was complete. Try increasing the max tokens setting.';
+$string['error_llm_response_exception'] = 'The LLM returned a response in an unrecognised format. Check your API endpoint and model settings.';
 $string['error_forum_not_found']       = 'Forum not found or you do not have permission to access it.';
 $string['error_nopermission']          = 'You do not have permission to perform this action.';
 $string['error_upload_invalid_type']   = 'Only .md files are accepted for prompt upload.';
