@@ -23,8 +23,8 @@
  *
  * What this does:
  *   1. Seeds the site-level settings row in local_lid_settings (courseid = 0)
- *      with the default prompt from prompts/default-session-analyzer.md and
- *      sensible defaults for all other columns.
+ *      with the default prompt from prompts/default-session-analyzer.md (v1.1)
+ *      and sensible defaults for all other columns.
  *
  * If this function throws an exception, Moodle will roll back the install
  * and report the error to the administrator.
