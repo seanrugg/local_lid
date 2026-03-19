@@ -1,0 +1,135 @@
+{{!
+    Standalone prompt editor panel.
+
+    Used at course level when a teacher visits the course LID settings
+    to customise or view the prompt template.
+
+    Context fields:
+        courseid           int
+        prompt_value       string   — current active prompt text
+        prompt_locked      bool     — site admin has locked the prompt
+        has_course_override bool    — course has its own prompt (not inherited)
+        can_edit_prompt    bool     — user has local/lid:editprompt capability
+        ajax_url           string   — ajax.php endpoint
+}}
+{{> local_lid/lid_styles}}
+
+<div style="max-width:900px">
+
+    <div class="lid-panel-title" style="margin-bottom:16px">
+        {{#str}}settings_heading_prompt, local_lid{{/str}}
+    </div>
+
+    {{! ── Locked notice ───────────────────────────────────────────────── }}
+    {{#prompt_locked}}
+    <div class="lid-notice lid-notice-warn" style="margin-bottom:16px">
+        {{#str}}prompt_locked_notice, local_lid{{/str}}
+    </div>
+    {{/prompt_locked}}
+
+    {{! ── Editable prompt editor ──────────────────────────────────────── }}
+    {{#can_edit_prompt}}
+    <div class="lid-prompt-editor"
+         data-courseid="{{courseid}}"
+         data-locked="{{#prompt_locked}}1{{/prompt_locked}}{{^prompt_locked}}0{{/prompt_locked}}">
+
+        <div style="position:relative">
+            <textarea id="lid-prompt-textarea"
+                      rows="20"
+                      style="width:100%;box-sizing:border-box;
+                             background:var(--lid-surface2);
+                             border:1px solid var(--lid-border);
+                             color:var(--lid-text);
+                             font-family:'DM Mono',monospace;
+                             font-size:11px;line-height:1.6;
+                             padding:14px;border-radius:4px;
+                             resize:vertical;outline:none;
+                             {{#prompt_locked}}opacity:0.6;cursor:not-allowed;{{/prompt_locked}}"
+                      {{#prompt_locked}}disabled readonly{{/prompt_locked}}
+                      >{{prompt_value}}</textarea>
+        </div>
+
+        <div class="lid-prompt-footer"
+             style="display:flex;align-items:center;justify-content:space-between;
+                    flex-wrap:wrap;gap:10px;margin-top:10px">
+
+            <span class="lid-prompt-charcount lid-mono"
+                  style="font-size:10px;color:var(--lid-muted)">
+            </span>
+
+            {{^prompt_locked}}
+            <div class="lid-prompt-actions"
+                 style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+
+                <label class="lid-btn lid-btn-secondary"
+                       style="font-size:10px;cursor:pointer">
+                    {{#str}}prompt_upload_label, local_lid{{/str}}
+                    <input type="file"
+                           class="lid-prompt-file-input"
+                           accept=".md"
+                           style="position:absolute;width:1px;height:1px;
+                                  opacity:0;overflow:hidden">
+                </label>
+
+                {{#has_course_override}}
+                <button class="lid-btn lid-btn-secondary lid-prompt-reset-course"
+                        style="font-size:10px">
+                    {{#str}}prompt_reset_course, local_lid{{/str}}
+                </button>
+                {{/has_course_override}}
+
+                <button class="lid-btn lid-btn-primary lid-prompt-save"
+                        style="font-size:10px">
+                    {{#str}}prompt_upload_label, local_lid{{/str}}
+                </button>
+
+            </div>
+            {{/prompt_locked}}
+
+        </div>
+
+        {{! Inheritance notice }}
+        {{^has_course_override}}
+        <div class="lid-mono"
+             style="font-size:10px;color:var(--lid-muted);margin-top:8px;
+                    padding:8px 12px;background:var(--lid-surface);
+                    border-left:2px solid var(--lid-dim);border-radius:0 4px 4px 0">
+            Showing the site-level prompt. Edit and save to create a course-level override.
+        </div>
+        {{/has_course_override}}
+        {{#has_course_override}}
+        <div class="lid-mono"
+             style="font-size:10px;color:var(--lid-accent3);margin-top:8px;
+                    padding:8px 12px;background:var(--lid-surface);
+                    border-left:2px solid var(--lid-accent3);border-radius:0 4px 4px 0">
+            This course is using a custom prompt override.
+        </div>
+        {{/has_course_override}}
+
+    </div>
+    {{/can_edit_prompt}}
+
+    {{! ── Read-only view (no capability) ─────────────────────────────── }}
+    {{^can_edit_prompt}}
+    <pre style="background:var(--lid-surface2);border:1px solid var(--lid-border);
+                border-radius:4px;padding:14px;font-family:'DM Mono',monospace;
+                font-size:10px;color:var(--lid-muted);line-height:1.6;
+                white-space:pre-wrap;word-break:break-word;
+                max-height:400px;overflow-y:auto">{{prompt_value}}</pre>
+    {{/can_edit_prompt}}
+
+</div>
+
+<style>
+#lid-prompt-textarea:focus,
+textarea.lid-prompt-textarea:focus {
+    border-color: var(--lid-accent) !important;
+    box-shadow: 0 0 0 2px rgba(0,229,255,0.08);
+}
+</style>
+
+<script>
+require(['local_lid/prompt_editor'], function(PromptEditor) {
+    PromptEditor.init();
+});
+</script>
