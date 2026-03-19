@@ -191,6 +191,34 @@ class aggregator {
     }
 
     // =========================================================================
+    // Public — on-demand merge for pre-decoded data
+    // =========================================================================
+
+    /**
+     * Merge an array of already-decoded LID JSON arrays into one aggregate.
+     *
+     * Used by student_lid_page to build a cross-forum student aggregate
+     * without persisting the result to the database.
+     *
+     * @param  array    $posts     Array of decoded LID data arrays.
+     * @param  int      $courseid
+     * @param  int|null $forumid
+     * @param  int|null $userid
+     * @return array|null          Merged LID data array, or null if $posts is empty.
+     */
+    public function merge_decoded_posts(
+        array $posts,
+        int $courseid,
+        ?int $forumid,
+        ?int $userid
+    ): ?array {
+        if (empty($posts)) {
+            return null;
+        }
+        return $this->merge($posts, $courseid, $forumid, $userid);
+    }
+
+    // =========================================================================
     // Private — core merge engine
     // =========================================================================
 
