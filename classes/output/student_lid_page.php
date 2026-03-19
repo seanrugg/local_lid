@@ -29,59 +29,53 @@ defined('MOODLE_INTERNAL') || die();
 /**
  * Renderable data object for the Student LID dashboard.
  *
- * Loaded by student_view.php and passed to the student_lid Mustache template.
+ * All analysis cards are pre-rendered to HTML strings. The template outputs
+ * them unescaped with {{{ }}}.
  *
  * Data structure exported to template:
  *
- *   userid           int
- *   fullname         string
- *   userpic          string    — HTML for user picture
- *   courseid         int
- *   coursename       string
- *   has_data         bool      — false when no analysed posts exist
- *   nodata_notice    string
- *   aggregate_json   string    — JSON-encoded course-scope student aggregate (or null)
- *                                (computed by merging all student_forum aggregates
- *                                 for this student in this course)
- *   has_aggregate    bool
- *   stale_notice     bool
- *   last_updated     string
- *   forums           array     — one entry per forum with analysed posts:
- *     forumid        int
- *     forumname      string
- *     cmid           int
- *     forum_url      string    — URL to the Forum LID page
- *     student_json   string    — JSON-encoded student_forum-scope LID (or null)
- *     has_student_lid bool
- *     post_count     int
- *     pending_count  int
- *     posts          array     — individual post analyses:
- *       postid       int
- *       subject      string
- *       posted_date  string
- *       analysis_json string
- *       has_analysis  bool
- *       status       string
- *       status_label string
- *   can_trigger      bool
- *   trigger_url      string
+ *   userid               int
+ *   fullname             string
+ *   userpic              string   — HTML img tag
+ *   courseid             int
+ *   coursename           string
+ *   has_data             bool
+ *   nodata_notice        string
+ *   aggregate_html       string   — cross-forum student aggregate card HTML (or '')
+ *   has_aggregate        bool
+ *   stale_notice         bool
+ *   last_updated         string
+ *   forums               array
+ *     forumid            int
+ *     forumname          string
+ *     cmid               int
+ *     forum_url          string
+ *     student_html       string   — student_forum card HTML (or '')
+ *     has_student_lid    bool
+ *     post_count         int
+ *     pending_count      int
+ *     posts              array
+ *       postid           int
+ *       subject          string
+ *       posted_date      string
+ *       analysis_html    string   — compact post card HTML (or '')
+ *       has_analysis     bool
+ *       status           string
+ *       status_html      string   — pre-rendered status badge HTML
+ *   can_trigger          bool
+ *   trigger_url          string
  */
 class student_lid_page implements \renderable, \templatable {
 
-    /** @var \stdClass The student user record. */
+    /** @var \stdClass */
     private \stdClass $student;
 
-    /** @var \stdClass Course record. */
+    /** @var \stdClass */
     private \stdClass $course;
 
     /** @var \context_course */
     private \context_course $context;
 
-    /**
-     * @param \stdClass       $student
-     * @param \stdClass       $course
-     * @param \context_course $context
-     */
     public function __construct(\stdClass $student, \stdClass $course, \context_course $context) {
         $this->student = $student;
         $this->course  = $course;
@@ -91,14 +85,15 @@ class student_lid_page implements \renderable, \templatable {
     /**
      * Export data for the Mustache template.
      *
-     * @param  \renderer_base $output
+     * @param  \renderer_base $output  Must be local_lid\output\renderer.
      * @return array
      */
     public function export_for_template(\renderer_base $output): array {
         global $DB;
 
-        $userid    = (int) $this->student->id;
-        $courseid  = (int) $this->course->id;
+        /** @var renderer $output */
+        $userid     = (int) $this->student->id;
+        $courseid   = (int) $this->course->id;
         $cantrigger = has_capability('local/lid:triggeranalysis', $this->context);
 
         $userpic = $output->user_picture($this->student, [
@@ -107,7 +102,6 @@ class student_lid_page implements \renderable, \templatable {
             'link'     => false,
         ]);
 
-        // Get all LID-enabled forums in this course where this student has posts.
         $enabledforumids = $DB->get_fieldset_select(
             'local_lid_forum_config',
             'forumid',
@@ -121,7 +115,6 @@ class student_lid_page implements \renderable, \templatable {
 
         [$insql, $inparams] = $DB->get_in_or_equal($enabledforumids);
 
-        // Check whether this student has any post analyses at all.
         $hasanypost = $DB->record_exists_sql(
             "SELECT 1 FROM {local_lid_analysis}
               WHERE scope = 'post' AND userid = :userid AND courseid = :courseid
@@ -133,24 +126,20 @@ class student_lid_page implements \renderable, \templatable {
             return $this->empty_response($userid, $userpic, $courseid, $cantrigger);
         }
 
-        // Build per-forum data.
-        $forumsdata = [];
-        $stale      = false;
-        $lastmod    = 0;
-        $studentforumaggs = []; // Collected to build cross-forum aggregate.
+        $forumsdata       = [];
+        $stale            = false;
+        $lastmod          = 0;
+        $studentforumaggs = [];
 
         foreach ($enabledforumids as $forumid) {
             $forumid = (int) $forumid;
 
-            // Does this student have any posts in this forum?
-            $hasposts = $DB->record_exists('local_lid_analysis', [
+            if (!$DB->record_exists('local_lid_analysis', [
                 'scope'    => 'post',
                 'forumid'  => $forumid,
                 'userid'   => $userid,
                 'courseid' => $courseid,
-            ]);
-
-            if (!$hasposts) {
+            ])) {
                 continue;
             }
 
@@ -164,7 +153,6 @@ class student_lid_page implements \renderable, \templatable {
                 continue;
             }
 
-            // Student_forum aggregate for this forum.
             $studentagg = $DB->get_record('local_lid_analysis', [
                 'scope'    => 'student_forum',
                 'forumid'  => $forumid,
@@ -175,25 +163,29 @@ class student_lid_page implements \renderable, \templatable {
 
             if ($studentagg) {
                 $studentforumaggs[] = $studentagg;
-                if ($studentagg->timemodified > $lastmod) {
+                if ((int)$studentagg->timemodified > $lastmod) {
                     $lastmod = (int) $studentagg->timemodified;
                 }
             }
 
-            // Individual post analyses.
+            // Pre-render student_forum card.
+            $studenthtml = $studentagg
+                ? $output->render_analysis_card($studentagg->analysis_json)
+                : '';
+
             $postanalyses = $DB->get_records(
                 'local_lid_analysis',
                 ['scope' => 'post', 'forumid' => $forumid, 'userid' => $userid],
                 'timecreated ASC'
             );
 
-            // Current prompt hash for stale detection.
             if (!$stale) {
                 $currenthash = hash('sha256',
                     (new \local_lid\llm\prompt_builder($courseid, $forumid))->get_active_template()
                 );
                 foreach ($postanalyses as $pa) {
-                    if ($pa->status === 'complete' && $pa->prompt_hash
+                    if ($pa->status === 'complete'
+                        && $pa->prompt_hash
                         && $pa->prompt_hash !== $currenthash) {
                         $stale = true;
                         break;
@@ -201,17 +193,9 @@ class student_lid_page implements \renderable, \templatable {
                 }
             }
 
-            // Build post rows.
-            $postrows     = [];
-            $completecnt  = 0;
-            $pendingcnt   = 0;
-
-            $statuslabels = [
-                'complete'   => get_string('status_complete',   'local_lid'),
-                'pending'    => get_string('status_pending',    'local_lid'),
-                'processing' => get_string('status_processing', 'local_lid'),
-                'error'      => get_string('status_error',      'local_lid'),
-            ];
+            $postrows   = [];
+            $completecnt = 0;
+            $pendingcnt  = 0;
 
             foreach ($postanalyses as $pa) {
                 $post = $DB->get_record('forum_posts',
@@ -233,18 +217,26 @@ class student_lid_page implements \renderable, \templatable {
                     $pendingcnt++;
                 }
 
-                if ($pa->timemodified > $lastmod) {
+                if ((int)$pa->timemodified > $lastmod) {
                     $lastmod = (int) $pa->timemodified;
                 }
+
+                // Pre-render compact post card and status badge.
+                $analysishtml = ($status === 'complete' && !empty($pa->analysis_json))
+                    ? $output->render_analysis_card(
+                        $pa->analysis_json,
+                        ['compact' => true, 'show_portfolio' => false, 'show_timeline' => false]
+                      )
+                    : '';
 
                 $postrows[] = [
                     'postid'        => (int) $pa->postid,
                     'subject'       => format_string($subject),
                     'posted_date'   => userdate($post->timecreated),
-                    'analysis_json' => $pa->analysis_json ?? null,
-                    'has_analysis'  => $status === 'complete' && !empty($pa->analysis_json),
+                    'analysis_html' => $analysishtml,
+                    'has_analysis'  => !empty($analysishtml),
                     'status'        => $status,
-                    'status_label'  => $statuslabels[$status] ?? $status,
+                    'status_html'   => $output->render_status_badge($status),
                 ];
             }
 
@@ -256,7 +248,7 @@ class student_lid_page implements \renderable, \templatable {
                     'cmid'     => $cm->id,
                     'courseid' => $courseid,
                 ]))->out(false),
-                'student_json'   => $studentagg ? $studentagg->analysis_json : null,
+                'student_html'   => $studenthtml,
                 'has_student_lid' => !empty($studentagg),
                 'post_count'     => $completecnt,
                 'pending_count'  => $pendingcnt,
@@ -268,9 +260,9 @@ class student_lid_page implements \renderable, \templatable {
             return $this->empty_response($userid, $userpic, $courseid, $cantrigger);
         }
 
-        // Build or load the cross-forum student aggregate for this course.
-        $aggregatejson = $this->get_or_build_student_course_aggregate(
-            $userid, $courseid, $studentforumaggs
+        // Build cross-forum student aggregate.
+        $aggregatehtml = $this->build_student_course_aggregate_html(
+            $studentforumaggs, $courseid, $userid, $output
         );
 
         return [
@@ -281,8 +273,8 @@ class student_lid_page implements \renderable, \templatable {
             'coursename'     => format_string($this->course->fullname),
             'has_data'       => true,
             'nodata_notice'  => '',
-            'aggregate_json' => $aggregatejson,
-            'has_aggregate'  => !empty($aggregatejson),
+            'aggregate_html' => $aggregatehtml,
+            'has_aggregate'  => !empty($aggregatehtml),
             'stale_notice'   => $stale,
             'last_updated'   => $lastmod ? userdate($lastmod) : '',
             'forums'         => $forumsdata,
@@ -296,35 +288,32 @@ class student_lid_page implements \renderable, \templatable {
     // -------------------------------------------------------------------------
 
     /**
-     * Build (or load from DB) a cross-forum student aggregate for this course.
+     * Build and render the cross-forum student aggregate card HTML.
      *
-     * There is no 'student_course' scope in the DB — we compute it on demand
-     * by running the aggregator across all student_forum records for this
-     * student in this course. The result is not persisted (too granular to
-     * cache usefully at this level), but the aggregator is fast since it
-     * works on already-computed student_forum JSON rather than raw posts.
+     * Merges all student_forum aggregates via the aggregator, then renders
+     * the result. Returns '' if there is nothing to merge.
      *
-     * @param  int          $userid
-     * @param  int          $courseid
-     * @param  \stdClass[]  $studentforumaggs  student_forum analysis records.
-     * @return string|null  JSON string, or null if no data.
+     * @param  \stdClass[] $studentforumaggs
+     * @param  int         $courseid
+     * @param  int         $userid
+     * @param  renderer    $output
+     * @return string  Pre-rendered HTML, or ''.
      */
-    private function get_or_build_student_course_aggregate(
-        int $userid,
+    private function build_student_course_aggregate_html(
+        array $studentforumaggs,
         int $courseid,
-        array $studentforumaggs
-    ): ?string {
+        int $userid,
+        renderer $output
+    ): string {
 
         if (empty($studentforumaggs)) {
-            return null;
+            return '';
         }
 
         if (count($studentforumaggs) === 1) {
-            // Only one forum — return its aggregate directly.
-            return $studentforumaggs[0]->analysis_json ?? null;
+            return $output->render_analysis_card($studentforumaggs[0]->analysis_json ?? null);
         }
 
-        // Decode all student_forum JSON and merge via aggregator.
         $decoded = [];
         foreach ($studentforumaggs as $agg) {
             if (!empty($agg->analysis_json)) {
@@ -336,26 +325,23 @@ class student_lid_page implements \renderable, \templatable {
         }
 
         if (empty($decoded)) {
-            return null;
+            return '';
         }
 
-        // Use the aggregator's internal merge via a lightweight facade.
-        // We can't call private merge() directly, so we use rebuild methods
-        // with a temporary scope. Since there's no student_course scope in the
-        // DB, we build a throwaway aggregated result instead.
-        //
-        // The cleanest approach: call a public method on aggregator that
-        // accepts pre-decoded post arrays. We add get_merged_json() for this.
         $aggregator = new \local_lid\analysis\aggregator();
         $merged     = $aggregator->merge_decoded_posts($decoded, $courseid, null, $userid);
 
-        return $merged
-            ? json_encode($merged, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
-            : null;
+        if (!$merged) {
+            return '';
+        }
+
+        return $output->render_analysis_card(
+            json_encode($merged, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
+        );
     }
 
     /**
-     * Build the empty/no-data response array.
+     * Build the empty / no-data response array.
      *
      * @param  int    $userid
      * @param  string $userpic
@@ -377,7 +363,7 @@ class student_lid_page implements \renderable, \templatable {
             'coursename'     => format_string($this->course->fullname),
             'has_data'       => false,
             'nodata_notice'  => get_string('dashboard_student_noposts', 'local_lid'),
-            'aggregate_json' => null,
+            'aggregate_html' => '',
             'has_aggregate'  => false,
             'stale_notice'   => false,
             'last_updated'   => '',
