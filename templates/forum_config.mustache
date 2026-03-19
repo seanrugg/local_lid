@@ -1,0 +1,208 @@
+{{!
+    Forum LID configuration panel.
+
+    Rendered into the forum settings area — either injected into
+    mod_edit.php via a settings callback or shown on a dedicated
+    forum settings tab.
+
+    Context fields:
+        forumid          int
+        courseid         int
+        enabled          bool     — current LID state for this forum
+        has_data         bool     — true if analyses exist for this forum
+        ajax_url         string   — ajax.php endpoint
+        prompt_locked    bool     — site admin has locked the prompt
+        can_edit_prompt  bool     — user has local/lid:editprompt
+        prompt_value     string   — current active prompt text for this forum
+        has_prompt_override bool  — forum has its own prompt (not inherited)
+        inherited_from   string   — 'course' | 'site' (where prompt comes from)
+}}
+{{> local_lid/lid_styles}}
+
+<div class="lid-forum-config"
+     data-forumid="{{forumid}}"
+     data-courseid="{{courseid}}"
+     data-enabled="{{#enabled}}1{{/enabled}}{{^enabled}}0{{/enabled}}"
+     data-has-data="{{#has_data}}1{{/has_data}}{{^has_data}}0{{/has_data}}"
+     data-url="{{ajax_url}}"
+     style="max-width:800px">
+
+    {{! ── Section heading ─────────────────────────────────────────────── }}
+    <div class="lid-panel-title" style="margin-bottom:16px">
+        {{#str}}forum_config_heading, local_lid{{/str}}
+    </div>
+
+    {{! ── Enable/disable toggle ───────────────────────────────────────── }}
+    <div style="display:flex;align-items:flex-start;gap:14px;margin-bottom:20px;
+                padding:16px;background:var(--lid-surface);border:1px solid var(--lid-border);
+                border-radius:var(--lid-radius)">
+
+        <label class="lid-toggle-label"
+               style="display:flex;align-items:center;gap:10px;cursor:pointer;flex:1">
+
+            {{! Toggle track }}
+            <span class="lid-toggle-track"
+                  style="position:relative;display:inline-block;
+                         width:40px;height:22px;flex-shrink:0">
+                <input type="checkbox"
+                       class="lid-forum-enable-toggle"
+                       {{#enabled}}checked{{/enabled}}
+                       style="position:absolute;opacity:0;width:100%;height:100%;
+                              cursor:pointer;margin:0;z-index:1">
+                <span class="lid-toggle-bg"
+                      style="position:absolute;inset:0;border-radius:11px;
+                             background:{{#enabled}}var(--lid-accent3){{/enabled}}{{^enabled}}var(--lid-dim){{/enabled}};
+                             transition:background 0.2s">
+                </span>
+                <span class="lid-toggle-knob"
+                      style="position:absolute;top:3px;
+                             left:{{#enabled}}21px{{/enabled}}{{^enabled}}3px{{/enabled}};
+                             width:16px;height:16px;border-radius:50%;
+                             background:#fff;transition:left 0.2s;pointer-events:none">
+                </span>
+            </span>
+
+            <span>
+                <span style="font-size:13px;font-weight:500;color:var(--lid-text);display:block;margin-bottom:2px">
+                    {{#str}}forum_config_enabled, local_lid{{/str}}
+                </span>
+                <span class="lid-mono" style="font-size:10px;color:var(--lid-muted)">
+                    {{#str}}forum_config_enabled_desc, local_lid{{/str}}
+                </span>
+            </span>
+        </label>
+
+        <div class="lid-forum-config-status" style="flex-shrink:0;padding-top:4px"></div>
+    </div>
+
+    {{! ── Prompt override section ─────────────────────────────────────── }}
+    {{#can_edit_prompt}}
+    <div class="lid-forum-prompt-section{{^enabled}} lid-forum-prompt-hidden{{/enabled}}"
+         style="margin-top:4px">
+
+        <div style="padding:16px;background:var(--lid-surface);
+                    border:1px solid var(--lid-border);border-radius:var(--lid-radius)">
+
+            <div class="lid-panel-title" style="margin-bottom:12px">
+                {{#str}}forum_config_prompt, local_lid{{/str}}
+                {{#has_prompt_override}}
+                <span class="lid-count-badge lid-count-complete" style="margin-left:8px">
+                    Forum override active
+                </span>
+                {{/has_prompt_override}}
+                {{^has_prompt_override}}
+                <span class="lid-mono" style="font-size:9px;color:var(--lid-muted);margin-left:8px">
+                    Inheriting from {{inherited_from}}
+                </span>
+                {{/has_prompt_override}}
+            </div>
+
+            <p class="lid-mono" style="font-size:10px;color:var(--lid-muted);
+                                       margin-bottom:12px;line-height:1.6">
+                {{#str}}forum_config_prompt_desc, local_lid{{/str}}
+            </p>
+
+            {{! Prompt editor wrapper — initialised by prompt_editor.js }}
+            <div class="lid-prompt-editor"
+                 data-courseid="{{courseid}}"
+                 data-locked="0">
+
+                <textarea id="lid-prompt-textarea-forum-{{forumid}}"
+                          class="lid-prompt-textarea"
+                          rows="14"
+                          style="width:100%;box-sizing:border-box;
+                                 background:var(--lid-surface2);
+                                 border:1px solid var(--lid-border);
+                                 color:var(--lid-text);
+                                 font-family:'DM Mono',monospace;
+                                 font-size:11px;line-height:1.6;
+                                 padding:12px;border-radius:4px;
+                                 resize:vertical;outline:none;"
+                          >{{prompt_value}}</textarea>
+
+                <div class="lid-prompt-footer"
+                     style="display:flex;align-items:center;justify-content:space-between;
+                            flex-wrap:wrap;gap:8px;margin-top:8px">
+
+                    <span class="lid-prompt-charcount lid-mono"
+                          style="font-size:10px;color:var(--lid-muted)">
+                    </span>
+
+                    <div class="lid-prompt-actions"
+                         style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+
+                        <label class="lid-btn lid-btn-secondary"
+                               style="font-size:10px;cursor:pointer">
+                            Upload .md
+                            <input type="file"
+                                   class="lid-prompt-file-input"
+                                   accept=".md"
+                                   style="position:absolute;width:1px;height:1px;
+                                          opacity:0;overflow:hidden">
+                        </label>
+
+                        {{#has_prompt_override}}
+                        <button class="lid-btn lid-btn-secondary lid-prompt-reset-course"
+                                style="font-size:10px">
+                            {{#str}}prompt_reset_course, local_lid{{/str}}
+                        </button>
+                        {{/has_prompt_override}}
+
+                        <button class="lid-btn lid-btn-primary lid-prompt-save"
+                                data-forumid="{{forumid}}"
+                                style="font-size:10px">
+                            {{#str}}prompt_saved, local_lid{{/str}}
+                        </button>
+
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+    {{/can_edit_prompt}}
+
+    {{! ── Locked notice ───────────────────────────────────────────────── }}
+    {{#prompt_locked}}
+    <div class="lid-notice lid-notice-info" style="margin-top:4px">
+        {{#str}}prompt_locked_notice, local_lid{{/str}}
+    </div>
+    {{/prompt_locked}}
+
+    {{! ── No-permission read-only prompt view ─────────────────────────── }}
+    {{^can_edit_prompt}}
+    {{^prompt_locked}}
+    {{#enabled}}
+    <div style="margin-top:4px;padding:16px;background:var(--lid-surface);
+                border:1px solid var(--lid-border);border-radius:var(--lid-radius)">
+        <div class="lid-panel-title" style="margin-bottom:10px">
+            Active prompt
+            <span class="lid-mono" style="font-size:9px;color:var(--lid-muted);margin-left:8px">
+                Inheriting from {{inherited_from}}
+            </span>
+        </div>
+        <pre style="background:var(--lid-surface2);border:1px solid var(--lid-border);
+                    border-radius:4px;padding:12px;font-family:'DM Mono',monospace;
+                    font-size:10px;color:var(--lid-muted);line-height:1.6;
+                    white-space:pre-wrap;word-break:break-word;max-height:200px;
+                    overflow-y:auto">{{prompt_value}}</pre>
+    </div>
+    {{/enabled}}
+    {{/prompt_locked}}
+    {{/can_edit_prompt}}
+
+</div>
+
+<style>
+.lid-forum-prompt-hidden { display: none; }
+.lid-prompt-textarea:focus {
+    border-color: var(--lid-accent) !important;
+    box-shadow: 0 0 0 2px rgba(0,229,255,0.08);
+}
+</style>
+
+<script>
+require(['local_lid/forum_config'], function(ForumConfig) {
+    ForumConfig.init();
+});
+</script>
