@@ -1,7 +1,8 @@
 {{!
     Course LID report page.
-
     Context: see classes/output/course_lid_page.php::export_for_template()
+    Analysis cards arrive as pre-rendered HTML in aggregate_html and
+    forums[].analysis_html — output with {{{ }}} to avoid escaping.
 }}
 {{> local_lid/lid_styles}}
 
@@ -21,7 +22,7 @@
         </div>
         {{#can_trigger}}
         <div class="lid-page-header-actions">
-            <button class="lid-btn lid-btn-secondary lid-trigger-forum-all"
+            <button class="lid-btn lid-btn-secondary lid-js-trigger-course"
                     data-courseid="{{courseid}}"
                     data-url="{{trigger_url}}">
                 {{#str}}dashboard_forum_reanalyse_all, local_lid{{/str}}
@@ -37,7 +38,7 @@
     </div>
     {{/stale_notice}}
 
-    {{! ── No forums state ─────────────────────────────────────────────── }}
+    {{! ── No forums empty state ───────────────────────────────────────── }}
     {{^haslid}}
     <div class="lid-empty-state">
         <div class="lid-empty-icon">📊</div>
@@ -49,22 +50,17 @@
     {{! ── Dashboard content ───────────────────────────────────────────── }}
     {{#haslid}}
 
-    {{! Forum tabs }}
-    <div class="lid-forum-tabs" role="tablist" aria-label="{{#str}}dashboard_course_allfora, local_lid{{/str}}">
-        {{#has_aggregate}}
+    {{! Tab bar }}
+    <div class="lid-forum-tabs" id="lid-course-tabs" role="tablist">
         <button class="lid-forum-tab lid-forum-tab-active"
-                role="tab"
-                aria-selected="true"
+                role="tab" aria-selected="true"
                 aria-controls="lid-panel-aggregate"
                 data-target="lid-panel-aggregate">
             {{#str}}dashboard_course_allfora, local_lid{{/str}}
-            <span class="lid-tab-count">{{#forums}}{{/forums}}</span>
         </button>
-        {{/has_aggregate}}
         {{#forums}}
         <button class="lid-forum-tab"
-                role="tab"
-                aria-selected="false"
+                role="tab" aria-selected="false"
                 aria-controls="lid-panel-forum-{{forumid}}"
                 data-target="lid-panel-forum-{{forumid}}">
             {{forumname}}
@@ -76,25 +72,23 @@
     </div>
 
     {{! Aggregate panel }}
-    {{#has_aggregate}}
     <div class="lid-tab-panel" id="lid-panel-aggregate" role="tabpanel">
-        {{#str}}dashboard_course_allfora, local_lid{{/str}}
-        {{> local_lid/analysis_card aggregate_json}}
-    </div>
-    {{/has_aggregate}}
-    {{^has_aggregate}}
-    <div class="lid-tab-panel" id="lid-panel-aggregate" role="tabpanel">
+        {{#has_aggregate}}
+        {{{aggregate_html}}}
+        {{/has_aggregate}}
+        {{^has_aggregate}}
         <div class="lid-notice lid-notice-info">
             {{#str}}dashboard_nodata, local_lid{{/str}}
         </div>
+        {{/has_aggregate}}
     </div>
-    {{/has_aggregate}}
 
     {{! Per-forum panels }}
     {{#forums}}
-    <div class="lid-tab-panel lid-tab-panel-hidden" id="lid-panel-forum-{{forumid}}" role="tabpanel">
+    <div class="lid-tab-panel lid-tab-panel-hidden"
+         id="lid-panel-forum-{{forumid}}"
+         role="tabpanel">
 
-        {{! Forum summary bar }}
         <div class="lid-forum-summary-bar">
             <div class="lid-forum-summary-counts">
                 <span class="lid-count-badge lid-count-complete">{{post_count}} complete</span>
@@ -110,9 +104,8 @@
             </a>
         </div>
 
-        {{! Forum aggregate dashboard }}
         {{#has_analysis}}
-        {{> local_lid/analysis_card analysis_json}}
+        {{{analysis_html}}}
         {{/has_analysis}}
         {{^has_analysis}}
         <div class="lid-notice lid-notice-info">
@@ -125,12 +118,12 @@
 
     {{/haslid}}
 
-</div>{{! end .lid-page }}
+</div>
 
 <script>
 require(['local_lid/dashboard'], function(Dashboard) {
     Dashboard.initCoursePage({
-        courseid: {{courseid}},
+        courseid:   {{courseid}},
         triggerUrl: '{{trigger_url}}'
     });
 });
