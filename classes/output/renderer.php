@@ -290,6 +290,109 @@ class renderer extends \plugin_renderer_base {
             'confidence_high'      => ($meta['confidence'] ?? '') === 'HIGH',
             'confidence_medium'    => ($meta['confidence'] ?? '') === 'MEDIUM',
             'confidence_low'       => ($meta['confidence'] ?? '') === 'LOW',
+
+            // Cognitive Performance Index (v1.1+ only; empty values for v1.0 data).
+        ] + $this->prepare_cpi_data($data['cognitive_performance_index'] ?? null);
+    }
+
+    /**
+     * Prepare Cognitive Performance Index data for the template.
+     *
+     * Returns a flat array of CPI fields. When CPI is absent (v1.0 data),
+     * returns safe empty/false defaults so the template renders nothing
+     * for those sections without Mustache errors.
+     *
+     * Band colors map to the dashboard accent palette:
+     *   Foundational → muted   (gray)
+     *   Developing   → warn    (orange)
+     *   Proficient   → info    (cyan)
+     *   Advanced     → accent2 (purple)
+     *   Exceptional  → accent3 (green)
+     *
+     * @param  array|null $cpi  Decoded cognitive_performance_index block, or null.
+     * @return array
+     */
+    private function prepare_cpi_data(?array $cpi): array {
+        if (empty($cpi)) {
+            return [
+                'has_cpi'              => false,
+                'cpi_score'            => 0,
+                'cpi_band'             => '',
+                'cpi_band_description' => '',
+                'cpi_calculation_note' => '',
+                'cpi_bar_width'        => 0,
+                'cpi_color'            => 'muted',
+                'cpi_is_exceptional'   => false,
+                'cpi_is_advanced'      => false,
+                'cpi_is_proficient'    => false,
+                'cpi_is_developing'    => false,
+                'cpi_is_foundational'  => false,
+                'cpi_components'       => [],
+                'has_cpi_components'   => false,
+            ];
+        }
+
+        $score = (int) ($cpi['cpi_score'] ?? 70);
+        $band  = $cpi['cpi_band'] ?? '';
+
+        // Map score 70–145 to a 0–100 bar width for CSS display.
+        $barwidth = (int) round(($score - 70) / 75 * 100);
+        $barwidth = max(0, min(100, $barwidth));
+
+        $bandcolors = [
+            'Foundational' => 'muted',
+            'Developing'   => 'orange',
+            'Proficient'   => 'cyan',
+            'Advanced'     => 'purple',
+            'Exceptional'  => 'green',
+        ];
+        $color = $bandcolors[$band] ?? 'muted';
+
+        // Build component score rows for the breakdown table.
+        $componentlabels = [
+            'cognitive_depth'    => 'Cognitive depth',
+            'meta_cognition'     => 'Meta-cognition',
+            'strategic_thinking' => 'Strategic thinking',
+            'engagement'         => 'Engagement',
+            'roi_awareness'      => 'ROI awareness',
+        ];
+        $componentweights = $cpi['component_weights'] ?? [
+            'cognitive_depth'    => 0.35,
+            'meta_cognition'     => 0.25,
+            'strategic_thinking' => 0.20,
+            'engagement'         => 0.15,
+            'roi_awareness'      => 0.05,
+        ];
+        $componentscores = $cpi['component_scores'] ?? [];
+
+        $components = [];
+        foreach ($componentlabels as $key => $label) {
+            $val    = (int) ($componentscores[$key] ?? 0);
+            $weight = (float) ($componentweights[$key] ?? 0);
+            $components[] = [
+                'label'       => $label,
+                'score'       => $val,
+                'weight_pct'  => (int) round($weight * 100),
+                'bar_width'   => $val,
+                'contribution' => number_format($val * $weight, 1),
+            ];
+        }
+
+        return [
+            'has_cpi'              => true,
+            'cpi_score'            => $score,
+            'cpi_band'             => $band,
+            'cpi_band_description' => $cpi['cpi_band_description'] ?? '',
+            'cpi_calculation_note' => $cpi['calculation_note'] ?? '',
+            'cpi_bar_width'        => $barwidth,
+            'cpi_color'            => $color,
+            'cpi_is_exceptional'   => $band === 'Exceptional',
+            'cpi_is_advanced'      => $band === 'Advanced',
+            'cpi_is_proficient'    => $band === 'Proficient',
+            'cpi_is_developing'    => $band === 'Developing',
+            'cpi_is_foundational'  => $band === 'Foundational',
+            'cpi_components'       => $components,
+            'has_cpi_components'   => !empty($components),
         ];
     }
 
