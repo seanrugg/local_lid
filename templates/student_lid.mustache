@@ -1,0 +1,149 @@
+{{!
+    Student LID profile tab page.
+
+    Context: see classes/output/student_lid_page.php::export_for_template()
+}}
+{{> local_lid/lid_styles}}
+
+<div class="lid-page lid-page-student">
+
+    {{! ── Page header ─────────────────────────────────────────────────── }}
+    <div class="lid-page-header">
+        <div class="lid-page-header-left" style="display:flex;align-items:center;gap:14px">
+            {{{userpic}}}
+            <div>
+                <h2 class="lid-heading">{{fullname}}</h2>
+                <div class="lid-mono lid-muted" style="font-size:10px;margin-top:3px">
+                    {{coursename}}
+                    {{#last_updated}}
+                    <span class="lid-sep">·</span>
+                    {{#str}}dashboard_last_updated, local_lid, {{last_updated}}{{/str}}
+                    {{/last_updated}}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {{! ── Notices ─────────────────────────────────────────────────────── }}
+    {{#stale_notice}}
+    <div class="lid-notice lid-notice-warn">
+        {{#str}}dashboard_stale_notice, local_lid{{/str}}
+    </div>
+    {{/stale_notice}}
+
+    {{! ── No data state ───────────────────────────────────────────────── }}
+    {{^has_data}}
+    <div class="lid-empty-state">
+        <div class="lid-empty-icon">📊</div>
+        <div class="lid-empty-title">No data yet</div>
+        <div class="lid-empty-desc">{{nodata_notice}}</div>
+    </div>
+    {{/has_data}}
+
+    {{#has_data}}
+
+    {{! ── View tabs: Aggregate / Per-forum ───────────────────────────── }}
+    <div class="lid-forum-tabs" role="tablist">
+        <button class="lid-forum-tab lid-forum-tab-active"
+                role="tab" aria-selected="true"
+                aria-controls="lid-student-aggregate"
+                data-target="lid-student-aggregate">
+            {{#str}}dashboard_student_allfora, local_lid{{/str}}
+        </button>
+        {{#forums}}
+        <button class="lid-forum-tab"
+                role="tab" aria-selected="false"
+                aria-controls="lid-student-forum-{{forumid}}"
+                data-target="lid-student-forum-{{forumid}}">
+            {{forumname}}
+            <span class="lid-tab-count">{{post_count}}</span>
+        </button>
+        {{/forums}}
+    </div>
+
+    {{! ── Cross-forum aggregate panel ───────────────────────────────── }}
+    <div class="lid-tab-panel" id="lid-student-aggregate" role="tabpanel">
+        {{#has_aggregate}}
+        {{> local_lid/analysis_card aggregate_json}}
+        {{/has_aggregate}}
+        {{^has_aggregate}}
+        <div class="lid-notice lid-notice-info">
+            {{#str}}dashboard_nodata, local_lid{{/str}}
+        </div>
+        {{/has_aggregate}}
+    </div>
+
+    {{! ── Per-forum panels ───────────────────────────────────────────── }}
+    {{#forums}}
+    <div class="lid-tab-panel lid-tab-panel-hidden"
+         id="lid-student-forum-{{forumid}}"
+         role="tabpanel">
+
+        <div class="lid-forum-summary-bar">
+            <div class="lid-forum-summary-counts">
+                <span class="lid-count-badge lid-count-complete">{{post_count}} posts</span>
+                {{#pending_count}}
+                <span class="lid-count-badge lid-count-pending">{{pending_count}} pending</span>
+                {{/pending_count}}
+            </div>
+            <a href="{{forum_url}}" class="lid-btn lid-btn-secondary" style="font-size:10px">
+                {{#str}}nav_forumdashboard, local_lid{{/str}} →
+            </a>
+        </div>
+
+        {{! Student-forum aggregate }}
+        {{#has_student_lid}}
+        {{> local_lid/analysis_card student_json}}
+        {{/has_student_lid}}
+        {{^has_student_lid}}
+        <div class="lid-notice lid-notice-info">
+            {{#str}}dashboard_nodata, local_lid{{/str}}
+        </div>
+        {{/has_student_lid}}
+
+        {{! Individual post analyses accordion }}
+        <div class="lid-posts-section">
+            <button class="lid-toggle-posts lid-btn lid-btn-ghost lid-btn-full"
+                    aria-expanded="false"
+                    aria-controls="lid-student-posts-{{forumid}}">
+                ▼ {{#str}}dashboard_student_viewpost, local_lid{{/str}} ({{post_count}})
+            </button>
+
+            <div class="lid-student-posts lid-student-posts-hidden"
+                 id="lid-student-posts-{{forumid}}">
+                {{#posts}}
+                <div class="lid-post-row">
+                    <div class="lid-post-header">
+                        <div class="lid-post-info">
+                            <span class="lid-post-subject">{{subject}}</span>
+                            <span class="lid-mono lid-muted" style="font-size:10px">{{posted_date}}</span>
+                        </div>
+                        <div class="lid-post-actions">
+                            {{> local_lid/status_badge}}
+                        </div>
+                    </div>
+                    {{#has_analysis}}
+                    <div class="lid-post-card-wrapper">
+                        {{> local_lid/analysis_card analysis_json compact=true show_portfolio=false show_timeline=false}}
+                    </div>
+                    {{/has_analysis}}
+                </div>
+                {{/posts}}
+            </div>
+        </div>
+
+    </div>
+    {{/forums}}
+
+    {{/has_data}}
+
+</div>{{! end .lid-page }}
+
+<script>
+require(['local_lid/dashboard'], function(Dashboard) {
+    Dashboard.initStudentPage({
+        userid:   {{userid}},
+        courseid: {{courseid}}
+    });
+});
+</script>
