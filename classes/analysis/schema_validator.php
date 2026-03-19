@@ -27,7 +27,7 @@ namespace local_lid\analysis;
 defined('MOODLE_INTERNAL') || die();
 
 /**
- * Validates a raw LLM response string against the LID Schema v1.0 structure.
+ * Validates a raw LLM response string against LID Schema v1.0 or v1.1.
  *
  * Validation is intentionally pragmatic rather than strict. The LLM will
  * sometimes return values outside the documented ranges (e.g. a score of
@@ -44,6 +44,13 @@ defined('MOODLE_INTERNAL') || die();
  *                    Examples: score out of range (clamped on read),
  *                    missing optional sub-fields, wrong bloom_label for
  *                    a given bloom_level.
+ *
+ * Schema version compatibility:
+ *   v1.0 — original schema; cognitive_performance_index absent (optional).
+ *   v1.1 — adds cognitive_performance_index with CPI score, band, and
+ *           component scores. All v1.0 fields remain unchanged.
+ *           v1.1 analyses produced by the v1.2 rubric prompt include
+ *           scored sub-fields and a mandatory calculation_note.
  *
  * The validator also detects truncated JSON — a common failure mode on
  * Comet/Perplexity and any endpoint with a tight output token limit —
@@ -64,12 +71,17 @@ defined('MOODLE_INTERNAL') || die();
  */
 class schema_validator {
 
-    /** @var string The schema version this validator checks against. */
-    const SCHEMA_VERSION = '1.0';
+    /** @var string Default/current schema version produced by the v1.2 prompt. */
+    const SCHEMA_VERSION = '1.1';
+
+    /** @var string[] All schema versions this validator accepts. */
+    const SUPPORTED_VERSIONS = ['1.0', '1.1'];
 
     /**
      * Required root-level keys. Every valid LID JSON object must have all of
      * these present and non-null.
+     * cognitive_performance_index is v1.1+ only and is treated as optional
+     * so that v1.0 data stored before the upgrade continues to validate.
      */
     private const REQUIRED_ROOT_KEYS = [
         'schema_version',
@@ -83,6 +95,28 @@ class schema_validator {
         'employer_value',
         'portfolio',
         'meta',
+    ];
+
+    /**
+     * Required keys within cognitive_performance_index (v1.1+ only).
+     * Validated only when the key is present.
+     */
+    private const REQUIRED_CPI_KEYS = [
+        'cpi_score',
+        'cpi_band',
+        'cpi_band_description',
+        'calculation_note',
+    ];
+
+    /**
+     * Valid CPI band labels.
+     */
+    private const VALID_CPI_BANDS = [
+        'Foundational',
+        'Developing',
+        'Proficient',
+        'Advanced',
+        'Exceptional',
     ];
 
     /**
@@ -215,10 +249,9 @@ class schema_validator {
             );
         }
 
-        // Step 4 — schema_version check.
+        // Step 4 — schema_version check. Accept all supported versions.
         $version = $data['schema_version'] ?? null;
-        if ($version !== self::SCHEMA_VERSION) {
-            // Wrong version is fatal — we cannot safely render an unknown schema.
+        if (!in_array($version, self::SUPPORTED_VERSIONS, true)) {
             return validation_result::fatal(
                 [get_string('error_llm_schema_mismatch', 'local_lid', $version ?? 'missing')],
                 $warnings,
@@ -248,6 +281,11 @@ class schema_validator {
         $this->validate_employer_value($data['employer_value'], $warnings);
         $this->validate_portfolio($data['portfolio'], $warnings);
         $this->validate_meta($data['meta'], $warnings);
+
+        // CPI is present in v1.1 analyses; optional but validated when present.
+        if (isset($data['cognitive_performance_index'])) {
+            $this->validate_cpi($data['cognitive_performance_index'], $errors, $warnings);
+        }
 
         // Step 7 — coerce numeric strings to numbers throughout.
         // The LLM sometimes returns scores as strings ("75") rather than
@@ -593,6 +631,65 @@ class schema_validator {
         }
     }
 
+    /**
+     * Validate the cognitive_performance_index object (v1.1+).
+     *
+     * Required keys are fatal when CPI is present — if the LLM produced the
+     * object at all, it should be complete. Missing CPI entirely (v1.0 data)
+     * is fine; a partial CPI is an error.
+     *
+     * @param mixed $cpi
+     * @param array &$errors
+     * @param array &$warnings
+     */
+    private function validate_cpi($cpi, array &$errors, array &$warnings): void {
+        if (!is_array($cpi)) {
+            $errors[] = 'cognitive_performance_index must be an object.';
+            return;
+        }
+
+        // Required scalar fields.
+        foreach (self::REQUIRED_CPI_KEYS as $key) {
+            if (!array_key_exists($key, $cpi) || $cpi[$key] === null || $cpi[$key] === '') {
+                $errors[] = "Missing required cognitive_performance_index key: {$key}";
+            }
+        }
+
+        // cpi_score range 70–145.
+        if (isset($cpi['cpi_score'])) {
+            $score = (int) $cpi['cpi_score'];
+            if ($score < 70 || $score > 145) {
+                $warnings[] = "cognitive_performance_index.cpi_score {$score} is out of range 70–145.";
+            }
+        }
+
+        // cpi_band enum.
+        if (isset($cpi['cpi_band']) &&
+            !in_array($cpi['cpi_band'], self::VALID_CPI_BANDS, true)) {
+            $warnings[] = "cognitive_performance_index.cpi_band '{$cpi['cpi_band']}' " .
+                "is not a recognised value. Expected: " . implode(', ', self::VALID_CPI_BANDS);
+        }
+
+        // component_scores — all values should be 0–100.
+        if (isset($cpi['component_scores']) && is_array($cpi['component_scores'])) {
+            foreach ($cpi['component_scores'] as $field => $val) {
+                if (is_numeric($val) && ((float)$val < 0 || (float)$val > 100)) {
+                    $warnings[] = "cognitive_performance_index.component_scores.{$field} " .
+                        "is out of range 0–100: {$val}";
+                }
+            }
+        }
+
+        // calculation_note must contain the required disclaimer.
+        if (!empty($cpi['calculation_note'])) {
+            $required = 'Not a measure of general intelligence';
+            if (strpos($cpi['calculation_note'], $required) === false) {
+                $warnings[] = 'cognitive_performance_index.calculation_note is missing the ' .
+                    'required disclaimer about general intelligence.';
+            }
+        }
+    }
+
     // -------------------------------------------------------------------------
     // Private — helpers
     // -------------------------------------------------------------------------
@@ -765,6 +862,33 @@ class schema_validator {
 
         if ($coerced) {
             $warnings[] = 'One or more numeric fields were returned as strings by the LLM and have been coerced to their correct types.';
+        }
+
+        // cognitive_performance_index numeric fields (v1.1+).
+        if (isset($data['cognitive_performance_index']) &&
+            is_array($data['cognitive_performance_index'])) {
+            $cpi = &$data['cognitive_performance_index'];
+
+            // cpi_score — integer.
+            if (isset($cpi['cpi_score']) && is_string($cpi['cpi_score']) &&
+                is_numeric($cpi['cpi_score'])) {
+                $cpi['cpi_score'] = (int) $cpi['cpi_score'];
+            }
+            // Clamp to valid range.
+            if (isset($cpi['cpi_score'])) {
+                $cpi['cpi_score'] = max(70, min(145, (int) $cpi['cpi_score']));
+            }
+
+            // component_scores — all integers.
+            if (isset($cpi['component_scores']) && is_array($cpi['component_scores'])) {
+                foreach ($cpi['component_scores'] as $field => $val) {
+                    if (is_string($val) && is_numeric($val)) {
+                        $cpi['component_scores'][$field] = (int) $val;
+                    }
+                }
+            }
+
+            unset($cpi);
         }
 
         return $data;
