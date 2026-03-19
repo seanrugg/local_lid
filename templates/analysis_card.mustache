@@ -1,0 +1,230 @@
+{{!
+    Full LID analysis card — renders one complete Learning Intelligence Dashboard
+    panel from a decoded LID Schema v1.0 JSON object.
+
+    Passed through renderer::prepare_card_data(). All values are pre-formatted
+    strings or booleans — no logic in this template.
+
+    Context: see renderer.php::prepare_card_data() for full field list.
+}}
+<div class="lid-card{{#compact}} lid-card-compact{{/compact}}" data-schema="{{schema_version}}">
+
+    {{! ── Session header ──────────────────────────────────────────────── }}
+    <div class="lid-session-header">
+        <div class="lid-session-meta">
+            <span class="lid-mono lid-muted">{{session_date}}</span>
+            <span class="lid-sep">·</span>
+            <span class="lid-mono lid-muted">{{session_source}}</span>
+            <span class="lid-source-badge">{{session_source_type}}</span>
+        </div>
+        <div class="lid-session-title">{{session_title}}</div>
+        <div class="lid-session-summary lid-muted">{{session_summary}}</div>
+        <div class="lid-session-footer">
+            <span class="lid-mono lid-muted">~{{session_duration}} min</span>
+            {{#session_tags}}
+                <span class="lid-tag lid-tag-cyan">{{tag}}</span>
+            {{/session_tags}}
+        </div>
+    </div>
+
+    {{! ── Score cards ─────────────────────────────────────────────────── }}
+    <div class="lid-score-row">
+        <div class="lid-score-card lid-score-cyan">
+            <div class="lid-score-label">{{#str}}dashboard_competencies, local_lid{{/str}}</div>
+            <div class="lid-score-value">{{domains_count}}</div>
+            <div class="lid-score-sub">Distinct professional domains</div>
+        </div>
+        <div class="lid-score-card lid-score-purple">
+            <div class="lid-score-label">Cognitive depth</div>
+            <div class="lid-score-value">{{cognitive_depth}}</div>
+            <div class="lid-score-sub">Analysis, synthesis &amp; meta-cognition</div>
+        </div>
+        <div class="lid-score-card lid-score-green">
+            <div class="lid-score-label">Strategic thinking</div>
+            <div class="lid-score-value">{{strategic_thinking}}%</div>
+            <div class="lid-score-sub">Systems-level problem framing</div>
+        </div>
+        <div class="lid-score-card lid-score-orange">
+            <div class="lid-score-label">Meta-cognition</div>
+            <div class="lid-score-value">{{meta_cognition}}</div>
+            <div class="lid-score-sub">Self-awareness of learning process</div>
+        </div>
+    </div>
+
+    {{! ── Main grid ───────────────────────────────────────────────────── }}
+    <div class="lid-main-grid">
+
+        {{! Radar chart }}
+        {{#has_radar}}
+        <div class="lid-panel lid-panel-radar">
+            <div class="lid-panel-title">{{#str}}dashboard_radar, local_lid{{/str}}</div>
+            <div class="lid-radar-container">
+                <canvas class="lid-radar-canvas"
+                        data-axes="{{radar_axes_json}}"
+                        width="280" height="280"
+                        aria-label="Competency radar chart">
+                </canvas>
+            </div>
+        </div>
+        {{/has_radar}}
+
+        {{! Competency bars }}
+        <div class="lid-panel lid-panel-comps">
+            <div class="lid-panel-title">{{#str}}dashboard_competencies, local_lid{{/str}}</div>
+            <div class="lid-comp-list">
+                {{#competencies}}
+                <div class="lid-comp-item">
+                    <div class="lid-comp-header">
+                        <span class="lid-comp-name">{{name}}</span>
+                        <span class="lid-comp-score lid-mono">{{score}}%</span>
+                    </div>
+                    <div class="lid-comp-bar-bg">
+                        <div class="lid-comp-bar-fill {{color_class}}"
+                             style="width:0"
+                             data-width="{{bar_width}}">
+                        </div>
+                    </div>
+                    <div class="lid-comp-meta lid-mono">
+                        {{#has_frameworks}}
+                            {{#frameworks}}{{tag}} · {{/frameworks}}
+                        {{/has_frameworks}}
+                        Bloom's L{{bloom_level}} — {{bloom_label}}
+                    </div>
+                </div>
+                {{/competencies}}
+                {{^competencies}}
+                <p class="lid-muted lid-mono" style="font-size:11px">{{#str}}dashboard_nodata, local_lid{{/str}}</p>
+                {{/competencies}}
+            </div>
+        </div>
+
+        {{! ROI panel }}
+        <div class="lid-panel lid-panel-roi">
+            <div class="lid-panel-title">{{#str}}dashboard_roi, local_lid{{/str}}</div>
+            <div class="lid-roi-metric">
+                <div class="lid-roi-label">Est. knowledge value</div>
+                <div class="lid-roi-value">${{{knowledge_value}}}</div>
+                <div class="lid-roi-desc">Equivalent structured training cost</div>
+            </div>
+            <div class="lid-roi-metric">
+                <div class="lid-roi-label">Time efficiency</div>
+                <div class="lid-roi-value">{{efficiency_mult}}×</div>
+                <div class="lid-roi-desc">vs. equivalent LMS courseware (~{{lms_hours}}hrs vs {{session_hours}}hrs)</div>
+            </div>
+            <div class="lid-roi-metric">
+                <div class="lid-roi-label">Engagement score</div>
+                <div class="lid-roi-value">{{engagement_score}}%</div>
+                <div class="lid-roi-bars" data-score="{{engagement_score}}" aria-hidden="true"></div>
+            </div>
+            <div class="lid-roi-metric">
+                <div class="lid-roi-label">Retention probability</div>
+                <div class="lid-roi-value">{{retention_pct}}%</div>
+                <div class="lid-roi-desc">vs. 8–10% passive LMS retention</div>
+            </div>
+            <div class="lid-roi-metric">
+                <div class="lid-roi-label">Application readiness</div>
+                <div class="lid-roi-value lid-readiness-{{readiness_color}}">{{application_readiness}}</div>
+                <div class="lid-roi-desc">Immediate applicability to target roles</div>
+            </div>
+            <div class="lid-roi-metric">
+                <div class="lid-roi-label">Employer value index</div>
+                <div class="lid-roi-value">{{employer_value_index}}/10</div>
+                <div class="lid-roi-desc">Competency rarity, depth, AI integration</div>
+            </div>
+        </div>
+
+        {{! Bloom's taxonomy grid }}
+        <div class="lid-panel lid-panel-blooms">
+            <div class="lid-panel-title">{{#str}}dashboard_blooms, local_lid{{/str}}</div>
+            <div class="lid-blooms-grid">
+                {{#blooms_progression}}
+                <div class="lid-bloom-card{{^is_active}} lid-bloom-inactive{{/is_active}}">
+                    <div class="lid-bloom-num">0{{level}}</div>
+                    <div class="lid-bloom-icon">{{icon}}</div>
+                    <div class="lid-bloom-title">{{title}}</div>
+                    <div class="lid-bloom-desc">{{description}}</div>
+                    <div class="lid-bloom-dots">
+                        <div class="lid-bloom-dot{{#dot1}} lid-dot-active lid-dot-{{dot_color}}{{/dot1}}"></div>
+                        <div class="lid-bloom-dot{{#dot2}} lid-dot-active lid-dot-{{dot_color}}{{/dot2}}"></div>
+                        <div class="lid-bloom-dot{{#dot3}} lid-dot-active lid-dot-{{dot_color}}{{/dot3}}"></div>
+                        <div class="lid-bloom-dot{{#dot4}} lid-dot-active lid-dot-{{dot_color}}{{/dot4}}"></div>
+                        <div class="lid-bloom-dot{{#dot5}} lid-dot-active lid-dot-{{dot_color}}{{/dot5}}"></div>
+                    </div>
+                </div>
+                {{/blooms_progression}}
+            </div>
+        </div>
+
+    </div>{{! end .lid-main-grid }}
+
+    {{! ── Bottom row ──────────────────────────────────────────────────── }}
+    <div class="lid-bottom-grid">
+
+        {{! Employer value }}
+        {{#has_employer_value}}
+        <div class="lid-panel">
+            <div class="lid-panel-title">{{#str}}dashboard_employer_value, local_lid{{/str}}</div>
+            <div class="lid-value-list">
+                {{#employer_value}}
+                <div class="lid-value-item">
+                    <div class="lid-value-icon">{{icon}}</div>
+                    <div class="lid-value-text">
+                        <strong>{{title}}</strong>
+                        {{description}}
+                    </div>
+                </div>
+                {{/employer_value}}
+            </div>
+        </div>
+        {{/has_employer_value}}
+
+        {{! Timeline }}
+        {{#show_timeline}}
+        {{#has_timeline}}
+        <div class="lid-panel">
+            <div class="lid-panel-title">{{#str}}dashboard_timeline, local_lid{{/str}}</div>
+            <div class="lid-timeline">
+                {{#timeline}}
+                <div class="lid-tl-item">
+                    <div class="lid-tl-title">{{title}}</div>
+                    <div class="lid-tl-desc">{{description}}</div>
+                </div>
+                {{/timeline}}
+            </div>
+        </div>
+        {{/has_timeline}}
+        {{/show_timeline}}
+
+        {{! Portfolio }}
+        {{#show_portfolio}}
+        {{#has_portfolio}}
+        <div class="lid-panel">
+            <div class="lid-panel-title">{{#str}}dashboard_portfolio, local_lid{{/str}}</div>
+            <div class="lid-cert-block">
+                <div class="lid-cert-title">{{portfolio_title}}</div>
+                <div class="lid-cert-sub lid-mono">{{portfolio_subtitle}}</div>
+                <div class="lid-cert-tags">
+                    {{#portfolio_tags}}
+                    <span class="lid-tag lid-tag-cyan">{{tag}}</span>
+                    {{/portfolio_tags}}
+                </div>
+            </div>
+            {{#portfolio_formats}}
+            <div class="lid-cert-tags" style="margin-top:10px">
+                <span class="lid-tag lid-tag-{{color}}">{{label}}</span>
+            </div>
+            {{/portfolio_formats}}
+        </div>
+        {{/has_portfolio}}
+        {{/show_portfolio}}
+
+    </div>{{! end .lid-bottom-grid }}
+
+    {{! ── Meta footer ─────────────────────────────────────────────────── }}
+    {{#has_meta_notes}}
+    <div class="lid-meta-notice">
+        <span class="lid-mono" style="font-size:9px">{{meta_notes}}</span>
+    </div>
+    {{/has_meta_notes}}
+
+</div>{{! end .lid-card }}
