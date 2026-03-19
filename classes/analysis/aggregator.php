@@ -282,6 +282,12 @@ class aggregator {
         // Portfolio — union of tags, title from most recent.
         $out['portfolio'] = $this->merge_portfolio($posts);
 
+        // CPI — merge component scores, recompute CPI from merged values.
+        $cpis = array_filter(array_map(fn($p) => $p['cognitive_performance_index'] ?? null, $posts));
+        if (!empty($cpis)) {
+            $out['cognitive_performance_index'] = $this->merge_cpi(array_values($cpis), $weights, $totalweight);
+        }
+
         // Meta.
         $out['meta'] = $this->merge_meta($posts, count($posts));
 
@@ -730,6 +736,100 @@ class aggregator {
     }
 
     /**
+     * Merge cognitive_performance_index blocks from multiple posts.
+     *
+     * Strategy:
+     *   component_scores.*  — weighted average (same weights as other score fields).
+     *   cpi_score           — recomputed from merged component scores using the
+     *                         v1.1 formula: round(70 + (raw/100) × 75), clamped 70–145.
+     *   cpi_band            — derived from the recomputed cpi_score.
+     *   cpi_band_description — indicates this is an aggregated result.
+     *   calculation_note    — standard disclaimer, updated to note aggregation.
+     *
+     * @param  array   $cpis        Array of cognitive_performance_index arrays.
+     * @param  float[] $weights     Weights aligned to the parent $posts array —
+     *                              only the subset matching $cpis positions is used.
+     * @param  float   $totalweight
+     * @return array
+     */
+    private function merge_cpi(array $cpis, array $weights, float $totalweight): array {
+        // Component field names and their weights in the CPI formula.
+        $componentweights = [
+            'cognitive_depth'   => 0.35,
+            'meta_cognition'    => 0.25,
+            'strategic_thinking' => 0.20,
+            'engagement'        => 0.15,
+            'roi_awareness'     => 0.05,
+        ];
+
+        // Weighted average of each component score across posts that have CPI.
+        $localweight = 0.0;
+        foreach ($cpis as $cpi) {
+            $localweight += 1.0; // Equal weight per post with CPI data.
+        }
+
+        $mergedcomponents = [];
+        foreach (array_keys($componentweights) as $field) {
+            $sum = 0.0;
+            $n   = 0;
+            foreach ($cpis as $cpi) {
+                $val = $cpi['component_scores'][$field] ?? null;
+                if ($val !== null && is_numeric($val)) {
+                    $sum += (float) $val;
+                    $n++;
+                }
+            }
+            $mergedcomponents[$field] = $n > 0 ? (int) round($sum / $n) : 0;
+        }
+
+        // Recompute CPI from merged components.
+        $raw = 0.0;
+        foreach ($componentweights as $field => $w) {
+            $raw += ($mergedcomponents[$field] ?? 0) * $w;
+        }
+        $cpiscore = max(70, min(145, (int) round(70 + ($raw / 100) * 75)));
+
+        // Derive band from score.
+        $band = $this->cpi_band_from_score($cpiscore);
+
+        return [
+            'cpi_score'           => $cpiscore,
+            'cpi_band'            => $band,
+            'cpi_band_description' => "Aggregated CPI computed from " . count($cpis) .
+                " post analysis(es). Component scores are weighted averages; " .
+                "the CPI was recomputed using the v1.1 formula from merged components.",
+            'component_weights'   => $componentweights,
+            'component_scores'    => $mergedcomponents,
+            'calculation_note'    => "Session-specific behavioral composite scored via " .
+                "LI Dashboard Prompt v1.2 rubrics. Not a measure of general intelligence " .
+                "or a psychometric IQ equivalent. Reflects observed cognitive performance " .
+                "within this session only. This entry represents an aggregated result.",
+        ];
+    }
+
+    /**
+     * Map a CPI score (70–145) to its band label.
+     *
+     * @param  int    $score
+     * @return string
+     */
+    private function cpi_band_from_score(int $score): string {
+        if ($score >= 130) {
+            return 'Exceptional';
+        }
+        if ($score >= 115) {
+            return 'Advanced';
+        }
+        if ($score >= 100) {
+            return 'Proficient';
+        }
+        if ($score >= 85) {
+            return 'Developing';
+        }
+        return 'Foundational';
+    }
+
+    /**
      * Build the aggregate meta block.
      *
      * confidence = lowest (most conservative) confidence across all posts.
@@ -775,6 +875,7 @@ class aggregator {
             ($data['meta']['notes'] ?? '');
         $data['session']['source']      = 'Moodle Forum';
         $data['session']['source_type'] = 'other';
+        // CPI carries through unchanged from the single post — no recomputation needed.
         return $data;
     }
 
