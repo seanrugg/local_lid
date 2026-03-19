@@ -494,6 +494,77 @@
     line-height: 1.5;
 }
 
+/* ── Cognitive Performance Index panel ─────────────────────────── */
+.lid-cpi-panel {
+    background: var(--lid-surface);
+    border: 1px solid var(--lid-border);
+    border-radius: 6px;
+    padding: 16px;
+    margin-bottom: 14px;
+    animation: lid-fadeUp 0.4s ease both;
+}
+.lid-cpi-header {
+    display: flex;
+    gap: 20px;
+    align-items: flex-start;
+    margin-bottom: 12px;
+}
+.lid-cpi-left  { flex-shrink: 0; min-width: 90px; }
+.lid-cpi-right { flex: 1; }
+.lid-cpi-score {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 52px;
+    letter-spacing: 2px;
+    line-height: 1;
+    margin: 4px 0 2px;
+}
+.lid-cpi-cyan   { color: var(--lid-accent); }
+.lid-cpi-green  { color: var(--lid-accent3); }
+.lid-cpi-purple { color: var(--lid-accent2); }
+.lid-cpi-orange { color: var(--lid-warn); }
+.lid-cpi-muted  { color: var(--lid-muted); }
+.lid-cpi-band {
+    font-family: 'DM Mono', monospace;
+    font-size: 9px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+}
+.lid-cpi-band-cyan   { color: var(--lid-accent); }
+.lid-cpi-band-green  { color: var(--lid-accent3); }
+.lid-cpi-band-purple { color: var(--lid-accent2); }
+.lid-cpi-band-orange { color: var(--lid-warn); }
+.lid-cpi-band-muted  { color: var(--lid-muted); }
+.lid-cpi-bar-bg {
+    height: 6px;
+    background: var(--lid-dim);
+    border-radius: 3px;
+    overflow: hidden;
+    margin-bottom: 10px;
+}
+.lid-cpi-desc {
+    font-size: 11px;
+    color: var(--lid-muted);
+    line-height: 1.5;
+}
+.lid-cpi-components {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding-top: 10px;
+    border-top: 1px solid var(--lid-dim);
+}
+.lid-cpi-comp-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 3px;
+}
+.lid-cpi-comp-label {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--lid-text);
+}
+
 /* Animations */
 @keyframes lid-fadeUp {
     from { opacity: 0; transform: translateY(10px); }
