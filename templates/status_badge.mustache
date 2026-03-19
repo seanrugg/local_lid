@@ -1,0 +1,15 @@
+{{!
+    Status badge for a local_lid analysis record.
+
+    Context:
+        status        string  — pending | processing | complete | error
+        status_label  string  — localised label
+        is_pending    bool
+        is_processing bool
+        is_complete   bool
+        is_error      bool
+}}
+<span class="lid-status-badge lid-status-{{status}}" aria-label="{{status_label}}">
+    {{#is_processing}}<span class="lid-status-spinner" aria-hidden="true"></span>{{/is_processing}}
+    {{status_label}}
+</span>
