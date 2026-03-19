@@ -1,7 +1,8 @@
 {{!
     Forum LID tab page.
-
     Context: see classes/output/forum_lid_page.php::export_for_template()
+    All analysis cards and status badges arrive as pre-rendered HTML.
+    Output with {{{ }}} to avoid escaping.
 }}
 {{> local_lid/lid_styles}}
 
@@ -21,7 +22,7 @@
         </div>
         <div class="lid-page-header-actions">
             {{#can_trigger}}
-            <button class="lid-btn lid-btn-secondary lid-trigger-forum"
+            <button class="lid-btn lid-btn-secondary lid-js-trigger-forum"
                     data-forumid="{{forumid}}"
                     data-courseid="{{courseid}}"
                     data-url="{{trigger_url}}">
@@ -44,8 +45,8 @@
 
     {{#lid_enabled}}
 
-    {{! ── View tabs: Aggregate / Students ────────────────────────────── }}
-    <div class="lid-forum-tabs" role="tablist">
+    {{! ── View tabs ───────────────────────────────────────────────────── }}
+    <div class="lid-forum-tabs" id="lid-forum-tabs" role="tablist">
         <button class="lid-forum-tab lid-forum-tab-active"
                 role="tab" aria-selected="true"
                 aria-controls="lid-forum-aggregate"
@@ -57,14 +58,14 @@
                 aria-controls="lid-forum-students"
                 data-target="lid-forum-students">
             {{#str}}dashboard_forum_students, local_lid{{/str}}
-            <span class="lid-tab-count">{{#students}}{{/students}}</span>
+            <span class="lid-tab-count">{{#students}}1{{/students}}</span>
         </button>
     </div>
 
-    {{! ── Aggregate panel ────────────────────────────────────────────── }}
+    {{! ── Forum aggregate panel ──────────────────────────────────────── }}
     <div class="lid-tab-panel" id="lid-forum-aggregate" role="tabpanel">
         {{#has_aggregate}}
-        {{> local_lid/analysis_card aggregate_json}}
+        {{{aggregate_html}}}
         {{/has_aggregate}}
         {{^has_aggregate}}
         <div class="lid-notice lid-notice-info">
@@ -83,9 +84,8 @@
         {{/students}}
 
         {{#students}}
-        <div class="lid-student-row" data-userid="{{userid}}">
+        <div class="lid-student-row" id="lid-student-{{userid}}">
 
-            {{! Student summary header }}
             <div class="lid-student-header">
                 <div class="lid-student-avatar">{{{userpic}}}</div>
                 <div class="lid-student-info">
@@ -94,46 +94,44 @@
                         <span class="lid-count-badge lid-count-complete">{{post_count}} posts</span>
                         {{#pending_count}}<span class="lid-count-badge lid-count-pending">{{pending_count}} pending</span>{{/pending_count}}
                         {{#error_count}}<span class="lid-count-badge lid-count-error">{{error_count}} error</span>{{/error_count}}
-                        {{#top_bloom}}
-                        <span class="lid-bloom-badge">Bloom's L{{top_bloom}} — {{top_bloom_label}}</span>
-                        {{/top_bloom}}
-                        <span class="lid-score-inline">Top score: {{top_score}}%</span>
+                        {{#top_bloom}}<span class="lid-bloom-badge">Bloom's L{{top_bloom}} — {{top_bloom_label}}</span>{{/top_bloom}}
+                        {{#top_score}}<span class="lid-score-inline">Top: {{top_score}}%</span>{{/top_score}}
                     </div>
                 </div>
                 <div class="lid-student-actions">
                     <a href="{{student_url}}" class="lid-btn lid-btn-secondary" style="font-size:10px">
                         {{#str}}dashboard_forum_viewstudent, local_lid{{/str}}
                     </a>
-                    <button class="lid-toggle-posts lid-btn lid-btn-ghost"
+                    <button class="lid-btn lid-btn-ghost lid-js-toggle-posts"
                             aria-expanded="false"
-                            aria-controls="lid-student-posts-{{userid}}">
-                        ▼ Posts
+                            aria-controls="lid-posts-{{userid}}"
+                            data-target="lid-posts-{{userid}}">
+                        ▼ Posts ({{post_count}})
                     </button>
                 </div>
             </div>
 
-            {{! Student LID summary card (compact) }}
+            {{! Compact student LID preview }}
             {{#has_student_lid}}
             <div class="lid-student-lid-preview">
-                {{> local_lid/analysis_card student_json compact=true show_portfolio=false show_timeline=false}}
+                {{{student_html}}}
             </div>
             {{/has_student_lid}}
 
             {{! Individual posts accordion }}
             <div class="lid-student-posts lid-student-posts-hidden"
-                 id="lid-student-posts-{{userid}}">
+                 id="lid-posts-{{userid}}">
                 {{#posts}}
-                <div class="lid-post-row" data-postid="{{postid}}" data-analysisid="">
-
+                <div class="lid-post-row">
                     <div class="lid-post-header">
                         <div class="lid-post-info">
                             <span class="lid-post-subject">{{subject}}</span>
                             <span class="lid-mono lid-muted" style="font-size:10px">{{posted_date}}</span>
                         </div>
                         <div class="lid-post-actions">
-                            {{> local_lid/status_badge}}
+                            {{{status_html}}}
                             {{#can_trigger}}
-                            <button class="lid-btn lid-btn-ghost lid-reanalyse-post"
+                            <button class="lid-btn lid-btn-ghost lid-js-reanalyse"
                                     data-url="{{reanalyse_url}}"
                                     style="font-size:10px">
                                 {{#str}}dashboard_forum_reanalyse, local_lid{{/str}}
@@ -141,26 +139,23 @@
                             {{/can_trigger}}
                         </div>
                     </div>
-
-                    {{! Post analysis card — shown only when complete }}
                     {{#has_analysis}}
                     <div class="lid-post-card-wrapper">
-                        {{> local_lid/analysis_card analysis_json compact=true show_portfolio=false show_timeline=false}}
+                        {{{analysis_html}}}
                     </div>
                     {{/has_analysis}}
-
                 </div>
                 {{/posts}}
             </div>
 
-        </div>
+        </div>{{! end .lid-student-row }}
         {{/students}}
 
     </div>{{! end students panel }}
 
     {{/lid_enabled}}
 
-</div>{{! end .lid-page }}
+</div>
 
 <script>
 require(['local_lid/dashboard'], function(Dashboard) {
