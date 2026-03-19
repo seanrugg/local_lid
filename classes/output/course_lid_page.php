@@ -29,43 +29,43 @@ defined('MOODLE_INTERNAL') || die();
 /**
  * Renderable data object for the Course LID dashboard.
  *
- * Loaded by report.php and passed to the course_lid Mustache template.
+ * Analysis cards are pre-rendered to HTML strings in export_for_template()
+ * using renderer::render_analysis_card(). The Mustache template receives
+ * ready-to-use HTML and outputs it unescaped with {{{ }}}. This avoids
+ * Moodle's Mustache limitation where partials always receive the full page
+ * context rather than a specific named variable.
  *
  * Data structure exported to template:
  *
- *   courseid         int
- *   coursename       string
- *   haslid           bool    — false when no enabled forums exist
- *   noforums_notice  string  — localised notice when haslid = false
- *   aggregate_json   string  — JSON-encoded course-scope LID data (or null)
- *   has_aggregate    bool
- *   stale_notice     bool    — true if any analysis used a different prompt hash
- *   last_updated     string  — human-readable timestamp of newest analysis
- *   forums           array   — one entry per LID-enabled forum:
- *     forumid        int
- *     forumname      string
- *     cmid           int
- *     analysis_json  string  — JSON-encoded forum-scope LID data (or null)
- *     has_analysis   bool
- *     post_count     int     — number of complete post-scope analyses
- *     pending_count  int     — number of pending/processing posts
- *     error_count    int     — number of error posts
- *     view_url       string  — URL to the Forum LID page for this forum
- *   can_trigger      bool    — user has local/lid:triggeranalysis
- *   trigger_url      string  — AJAX endpoint for manual trigger
+ *   courseid             int
+ *   coursename           string
+ *   haslid               bool
+ *   noforums_notice      string
+ *   aggregate_html       string   — pre-rendered analysis card HTML (or '')
+ *   has_aggregate        bool
+ *   stale_notice         bool
+ *   last_updated         string
+ *   forums               array
+ *     forumid            int
+ *     forumname          string
+ *     cmid               int
+ *     analysis_html      string   — pre-rendered forum-scope card HTML (or '')
+ *     has_analysis       bool
+ *     post_count         int
+ *     pending_count      int
+ *     error_count        int
+ *     view_url           string
+ *   can_trigger          bool
+ *   trigger_url          string
  */
 class course_lid_page implements \renderable, \templatable {
 
-    /** @var \stdClass Course record. */
+    /** @var \stdClass */
     private \stdClass $course;
 
     /** @var \context_course */
     private \context_course $context;
 
-    /**
-     * @param \stdClass      $course
-     * @param \context_course $context
-     */
     public function __construct(\stdClass $course, \context_course $context) {
         $this->course  = $course;
         $this->context = $context;
@@ -74,16 +74,16 @@ class course_lid_page implements \renderable, \templatable {
     /**
      * Export data for the Mustache template.
      *
-     * @param  \renderer_base $output
+     * @param  \renderer_base $output  Must be local_lid\output\renderer.
      * @return array
      */
     public function export_for_template(\renderer_base $output): array {
-        global $DB, $USER;
+        global $DB;
 
-        $courseid   = $this->course->id;
+        /** @var renderer $output */
+        $courseid   = (int) $this->course->id;
         $cantrigger = has_capability('local/lid:triggeranalysis', $this->context);
 
-        // Load all LID-enabled forums in this course.
         $enabledconfigs = $DB->get_records(
             'local_lid_forum_config',
             ['courseid' => $courseid, 'enabled' => 1],
@@ -92,42 +92,40 @@ class course_lid_page implements \renderable, \templatable {
 
         if (empty($enabledconfigs)) {
             return [
-                'courseid'       => $courseid,
-                'coursename'     => format_string($this->course->fullname),
-                'haslid'         => false,
+                'courseid'        => $courseid,
+                'coursename'      => format_string($this->course->fullname),
+                'haslid'          => false,
                 'noforums_notice' => get_string('dashboard_course_noforums', 'local_lid'),
-                'aggregate_json' => null,
-                'has_aggregate'  => false,
-                'stale_notice'   => false,
-                'last_updated'   => '',
-                'forums'         => [],
-                'can_trigger'    => $cantrigger,
-                'trigger_url'    => (new \moodle_url('/local/lid/ajax.php'))->out(false),
+                'aggregate_html'  => '',
+                'has_aggregate'   => false,
+                'stale_notice'    => false,
+                'last_updated'    => '',
+                'forums'          => [],
+                'can_trigger'     => $cantrigger,
+                'trigger_url'     => (new \moodle_url('/local/lid/ajax.php'))->out(false),
             ];
         }
 
-        // Load the course-scope aggregate.
-        $courseaggregate = $DB->get_record('local_lid_analysis', [
+        // Course-scope aggregate.
+        $courseagg = $DB->get_record('local_lid_analysis', [
             'scope'    => 'course',
             'courseid' => $courseid,
             'status'   => 'complete',
         ]);
 
-        $aggregatejson = $courseaggregate ? $courseaggregate->analysis_json : null;
-        $hasaggregate  = !empty($aggregatejson);
+        $hasaggregate  = !empty($courseagg);
+        $aggregatehtml = $hasaggregate
+            ? $output->render_analysis_card($courseagg->analysis_json)
+            : '';
 
-        // Load forum details and per-forum analyses.
-        $forums    = [];
-        $stalenote = false;
-        $lastmod   = 0;
-
-        // Get current prompt hash for stale detection.
+        $forums            = [];
+        $stalenote         = false;
+        $lastmod           = 0;
         $currentprompthash = $this->get_current_prompt_hash($courseid);
 
         foreach ($enabledconfigs as $config) {
             $forumid = (int) $config->forumid;
 
-            // Get forum name and cmid.
             $forum = $DB->get_record('forum', ['id' => $forumid], 'id, name, course');
             if (!$forum) {
                 continue;
@@ -138,7 +136,6 @@ class course_lid_page implements \renderable, \templatable {
                 continue;
             }
 
-            // Forum-scope aggregate.
             $forumanalysis = $DB->get_record('local_lid_analysis', [
                 'scope'    => 'forum',
                 'forumid'  => $forumid,
@@ -146,10 +143,8 @@ class course_lid_page implements \renderable, \templatable {
                 'status'   => 'complete',
             ]);
 
-            // Post-scope counts.
             $counts = $this->get_post_counts($forumid, $courseid);
 
-            // Stale detection — any post analysed with a different prompt hash.
             if ($currentprompthash && !$stalenote) {
                 $stalecount = $DB->count_records_select(
                     'local_lid_analysis',
@@ -162,16 +157,20 @@ class course_lid_page implements \renderable, \templatable {
                 }
             }
 
-            // Track latest modification time.
             if ($forumanalysis && $forumanalysis->timemodified > $lastmod) {
-                $lastmod = $forumanalysis->timemodified;
+                $lastmod = (int) $forumanalysis->timemodified;
             }
+
+            // Pre-render the per-forum dashboard card.
+            $analysishtml = $forumanalysis
+                ? $output->render_analysis_card($forumanalysis->analysis_json)
+                : '';
 
             $forums[] = [
                 'forumid'       => $forumid,
                 'forumname'     => format_string($forum->name),
                 'cmid'          => (int) $cm->id,
-                'analysis_json' => $forumanalysis ? $forumanalysis->analysis_json : null,
+                'analysis_html' => $analysishtml,
                 'has_analysis'  => !empty($forumanalysis),
                 'post_count'    => $counts['complete'],
                 'pending_count' => $counts['pending'],
@@ -184,17 +183,17 @@ class course_lid_page implements \renderable, \templatable {
         }
 
         return [
-            'courseid'       => $courseid,
-            'coursename'     => format_string($this->course->fullname),
-            'haslid'         => true,
+            'courseid'        => $courseid,
+            'coursename'      => format_string($this->course->fullname),
+            'haslid'          => true,
             'noforums_notice' => '',
-            'aggregate_json' => $aggregatejson,
-            'has_aggregate'  => $hasaggregate,
-            'stale_notice'   => $stalenote,
-            'last_updated'   => $lastmod ? userdate($lastmod) : '',
-            'forums'         => $forums,
-            'can_trigger'    => $cantrigger,
-            'trigger_url'    => (new \moodle_url('/local/lid/ajax.php'))->out(false),
+            'aggregate_html'  => $aggregatehtml,
+            'has_aggregate'   => $hasaggregate,
+            'stale_notice'    => $stalenote,
+            'last_updated'    => $lastmod ? userdate($lastmod) : '',
+            'forums'          => $forums,
+            'can_trigger'     => $cantrigger,
+            'trigger_url'     => (new \moodle_url('/local/lid/ajax.php'))->out(false),
         ];
     }
 
@@ -218,25 +217,20 @@ class course_lid_page implements \renderable, \templatable {
                 'courseid' => $courseid,
                 'status'   => $status,
             ]);
-            if ($status === 'processing') {
-                $counts['pending'] += $n; // Surface processing as pending to the UI.
-            } else {
-                $counts[$status] = $n;
-            }
+            $counts[$status === 'processing' ? 'pending' : $status] += $n;
         }
 
         return $counts;
     }
 
     /**
-     * Get the SHA-256 hash of the currently active prompt for this course,
-     * for use in stale-analysis detection.
+     * SHA-256 hash of the active prompt for stale detection.
      *
      * @param  int $courseid
      * @return string|null
      */
     private function get_current_prompt_hash(int $courseid): ?string {
-        $builder = new \local_lid\llm\prompt_builder($courseid);
+        $builder  = new \local_lid\llm\prompt_builder($courseid);
         $template = $builder->get_active_template();
         return $template ? hash('sha256', $template) : null;
     }
