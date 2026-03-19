@@ -51,6 +51,53 @@
         </div>
     </div>
 
+    {{! ── Cognitive Performance Index panel (v1.1+ only) ────────────── }}
+    {{#has_cpi}}
+    <div class="lid-cpi-panel">
+        <div class="lid-cpi-header">
+            <div class="lid-cpi-left">
+                <div class="lid-score-label">Cognitive Performance Index</div>
+                <div class="lid-cpi-score lid-cpi-{{cpi_color}}">{{cpi_score}}</div>
+                <div class="lid-cpi-band lid-cpi-band-{{cpi_color}}">{{cpi_band}}</div>
+            </div>
+            <div class="lid-cpi-right">
+                <div class="lid-cpi-bar-bg">
+                    <div class="lid-cpi-bar-fill lid-comp-{{cpi_color}}"
+                         style="width:0"
+                         data-width="{{cpi_bar_width}}">
+                    </div>
+                </div>
+                <div class="lid-cpi-desc">{{cpi_band_description}}</div>
+            </div>
+        </div>
+        {{#has_cpi_components}}
+        <div class="lid-cpi-components">
+            {{#cpi_components}}
+            <div class="lid-cpi-component">
+                <div class="lid-cpi-comp-header">
+                    <span class="lid-cpi-comp-label">{{label}}</span>
+                    <span class="lid-mono" style="font-size:9px;color:var(--lid-muted)">
+                        {{weight_pct}}% weight · {{score}} → {{contribution}} pts
+                    </span>
+                </div>
+                <div class="lid-comp-bar-bg">
+                    <div class="lid-comp-bar-fill lid-comp-cyan"
+                         style="width:0;height:3px"
+                         data-width="{{bar_width}}">
+                    </div>
+                </div>
+            </div>
+            {{/cpi_components}}
+        </div>
+        {{/has_cpi_components}}
+        <div class="lid-mono" style="font-size:8px;color:var(--lid-dim);margin-top:8px;
+                                     line-height:1.4;border-top:1px solid var(--lid-dim);
+                                     padding-top:6px">
+            {{cpi_calculation_note}}
+        </div>
+    </div>
+    {{/has_cpi}}
+
     {{! ── Main grid ───────────────────────────────────────────────────── }}
     <div class="lid-main-grid">
 
