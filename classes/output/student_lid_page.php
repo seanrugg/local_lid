@@ -176,7 +176,7 @@ class student_lid_page implements \renderable, \templatable {
             $postanalyses = $DB->get_records(
                 'local_lid_analysis',
                 ['scope' => 'post', 'forumid' => $forumid, 'userid' => $userid],
-                'timecreated ASC'
+                'created ASC'
             );
 
             if (!$stale) {
@@ -199,7 +199,7 @@ class student_lid_page implements \renderable, \templatable {
 
             foreach ($postanalyses as $pa) {
                 $post = $DB->get_record('forum_posts',
-                    ['id' => $pa->postid], 'id, subject, timecreated, discussion');
+                    ['id' => $pa->postid], 'id, subject, created, discussion');
                 if (!$post) {
                     continue;
                 }
@@ -232,7 +232,7 @@ class student_lid_page implements \renderable, \templatable {
                 $postrows[] = [
                     'postid'        => (int) $pa->postid,
                     'subject'       => format_string($subject),
-                    'posted_date'   => userdate($post->timecreated),
+                    'posted_date'   => userdate($post->created),
                     'analysis_html' => $analysishtml,
                     'has_analysis'  => !empty($analysishtml),
                     'status'        => $status,
