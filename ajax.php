@@ -154,68 +154,107 @@ function handle_trigger(): array {
     }
 
     if ($forumid && $courseid) {
-        // Whole-forum mode — enqueue all posts in this forum.
+        // Whole-forum mode — backfill and enqueue all posts in this forum.
         $cm = get_coursemodule_from_instance('forum', $forumid, $courseid,
             false, MUST_EXIST);
         $context = context_module::instance($cm->id);
         require_capability('local/lid:triggeranalysis', $context);
 
-        // Step 1 — backfill: create analysis records for any forum posts
-        // that don't have one yet. This covers the case where LID was enabled
-        // after posts were already submitted (the observer never fired for them).
-        $existingpostids = $DB->get_fieldset_select(
-            'local_lid_analysis',
-            'postid',
-            "scope = 'post' AND forumid = :forumid",
-            ['forumid' => $forumid]
-        );
-        $existingpostids = array_map('intval', $existingpostids);
+        $queued = backfill_and_enqueue_forum($forumid, $courseid);
+        return ['success' => true, 'queued' => $queued];
+    }
 
-        $allposts = $DB->get_records_sql(
-            "SELECT p.id AS postid, p.userid, d.forum AS forumid,
-                    d.course AS courseid, p.discussion AS discussionid
-               FROM {forum_posts} p
-               JOIN {forum_discussions} d ON d.id = p.discussion
-              WHERE d.forum = :forumid
-                AND p.userid > 0",
-            ['forumid' => $forumid]
-        );
+    if ($courseid && !$forumid && !$analysisid) {
+        // Course-wide mode — backfill and enqueue all posts across all
+        // LID-enabled forums in this course.
+        $context = context_course::instance($courseid);
+        require_capability('local/lid:triggeranalysis', $context);
 
-        foreach ($allposts as $post) {
-            if (!in_array((int) $post->postid, $existingpostids, true)) {
-                $DB->insert_record('local_lid_analysis', (object) [
-                    'scope'        => 'post',
-                    'postid'       => (int) $post->postid,
-                    'userid'       => (int) $post->userid,
-                    'forumid'      => $forumid,
-                    'courseid'     => $courseid,
-                    'discussionid' => (int) $post->discussionid,
-                    'status'       => 'pending',
-                    'prompt_hash'  => null,
-                    'timecreated'  => time(),
-                    'timemodified' => time(),
-                ]);
-            }
-        }
-
-        // Step 2 — enqueue all pending/error post-scope analyses for this forum.
-        $analyses = $DB->get_records_select(
-            'local_lid_analysis',
-            "scope = 'post' AND forumid = :forumid AND status != 'processing'",
-            ['forumid' => $forumid]
+        $enabledforums = $DB->get_records(
+            'local_lid_forum_config',
+            ['courseid' => $courseid, 'enabled' => 1],
+            '',
+            'forumid'
         );
 
         $queued = 0;
-        foreach ($analyses as $analysis) {
-            if (enqueue_single_analysis($analysis)) {
-                $queued++;
-            }
+        foreach ($enabledforums as $config) {
+            $queued += backfill_and_enqueue_forum((int) $config->forumid, $courseid);
         }
 
         return ['success' => true, 'queued' => $queued];
     }
 
-    throw new \moodle_exception('missingparam', '', '', 'analysisid or forumid+courseid');
+    throw new \moodle_exception('missingparam', '', '', 'analysisid or forumid+courseid or courseid');
+}
+
+/**
+ * Backfill missing analysis records for all posts in a forum, then enqueue
+ * all pending/error records for processing.
+ *
+ * Backfill covers posts submitted before LID was enabled on the forum
+ * (the observer never fired for them so no analysis row exists).
+ *
+ * @param  int $forumid
+ * @param  int $courseid
+ * @return int Number of items enqueued.
+ */
+function backfill_and_enqueue_forum(int $forumid, int $courseid): int {
+    global $DB;
+
+    // Get all post IDs that already have analysis records.
+    $existingpostids = $DB->get_fieldset_select(
+        'local_lid_analysis',
+        'postid',
+        "scope = 'post' AND forumid = :forumid",
+        ['forumid' => $forumid]
+    );
+    $existingpostids = array_map('intval', $existingpostids);
+
+    // Get all real forum posts (exclude userid=0 system posts).
+    $allposts = $DB->get_records_sql(
+        "SELECT p.id AS postid, p.userid, d.forum AS forumid,
+                d.course AS courseid, p.discussion AS discussionid
+           FROM {forum_posts} p
+           JOIN {forum_discussions} d ON d.id = p.discussion
+          WHERE d.forum = :forumid
+            AND p.userid > 0",
+        ['forumid' => $forumid]
+    );
+
+    // Create analysis records for any posts that don't have one.
+    foreach ($allposts as $post) {
+        if (!in_array((int) $post->postid, $existingpostids, true)) {
+            $DB->insert_record('local_lid_analysis', (object) [
+                'scope'        => 'post',
+                'postid'       => (int) $post->postid,
+                'userid'       => (int) $post->userid,
+                'forumid'      => $forumid,
+                'courseid'     => $courseid,
+                'discussionid' => (int) $post->discussionid,
+                'status'       => 'pending',
+                'prompt_hash'  => null,
+                'timecreated'  => time(),
+                'timemodified' => time(),
+            ]);
+        }
+    }
+
+    // Enqueue all pending/error post-scope analyses for this forum.
+    $analyses = $DB->get_records_select(
+        'local_lid_analysis',
+        "scope = 'post' AND forumid = :forumid AND status != 'processing'",
+        ['forumid' => $forumid]
+    );
+
+    $queued = 0;
+    foreach ($analyses as $analysis) {
+        if (enqueue_single_analysis($analysis)) {
+            $queued++;
+        }
+    }
+
+    return $queued;
 }
 
 /**
