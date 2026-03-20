@@ -52,6 +52,10 @@
                COMMENT="Minimum minutes between scheduled task runs (maps to task customised field). Range 1-1440."/>
         <FIELD NAME="cron_batchsize" TYPE="int" LENGTH="5" NOTNULL="true" DEFAULT="10"
                COMMENT="Maximum number of queue items processed per scheduled task run"/>
+        <FIELD NAME="lid_default_enabled" TYPE="int" LENGTH="1" NOTNULL="true" DEFAULT="0"
+               COMMENT="Site-level only. 1 = LID analysis enabled by default for all new forums. 0 = disabled by default (teachers must opt in per forum)."/>
+        <FIELD NAME="lid_force_disabled" TYPE="int" LENGTH="1" NOTNULL="true" DEFAULT="0"
+               COMMENT="Site-level only. 1 = LID analysis force-disabled across the entire site. No teacher or course can override. Used for cost control and security lockdown."/>
         <FIELD NAME="timecreated" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0"/>
         <FIELD NAME="timemodified" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0"/>
       </FIELDS>
