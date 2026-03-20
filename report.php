@@ -54,8 +54,11 @@ $PAGE->navbar->add(
 );
 $PAGE->navbar->add(get_string('pluginname', 'local_lid'));
 
-// Load AMD modules.
-$PAGE->requires->js_call_amd('local_lid/dashboard', 'init', []);
+// Load AMD module with page-specific init.
+$PAGE->requires->js_call_amd('local_lid/dashboard', 'initCoursePage', [[
+    'courseid'   => (int) $courseid,
+    'triggerUrl' => (new moodle_url('/local/lid/ajax.php'))->out(false),
+]]);
 
 // Build renderable.
 $renderable = new \local_lid\output\course_lid_page($course, $context);
