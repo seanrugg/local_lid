@@ -113,8 +113,18 @@ class forum_lid_page implements \renderable, \templatable {
         $canconfigure = has_capability('local/lid:configureforum', $this->context);
 
         $config     = $DB->get_record('local_lid_forum_config', ['forumid' => $forumid]);
-        $lidenabled = $config && (bool) $config->enabled;
         $forum      = $DB->get_record('forum', ['id' => $forumid], 'id, name');
+
+        // Resolve effective enabled state using full three-tier hierarchy:
+        // site force-disable → forum config row → site default.
+        $forcedisabled = (bool) get_config('local_lid', 'lid_force_disabled');
+        if ($forcedisabled) {
+            $lidenabled = false;
+        } elseif ($config !== false) {
+            $lidenabled = (bool) $config->enabled;
+        } else {
+            $lidenabled = (bool) get_config('local_lid', 'lid_default_enabled');
+        }
 
         $triggerurl = (new \moodle_url('/local/lid/ajax.php'))->out(false);
         $configurl  = (new \moodle_url('/local/lid/ajax.php', [
