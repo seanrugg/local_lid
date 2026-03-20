@@ -23,6 +23,10 @@
  *                analysis output. No DB schema changes required — the new field
  *                is stored within the existing analysis_json TEXT column.
  *                Default prompt updated to v1.2 rubric prompt.
+ *   2026032002 — Three-tier enable/disable hierarchy. Adds lid_default_enabled
+ *                and lid_force_disabled columns to local_lid_settings.
+ *                Adds course_settings.php UI surface and forum Edit Settings
+ *                integration via coursemodule_standard_elements callback.
  *
  * When adding a new upgrade step:
  *   1. Increment $plugin->version in version.php (e.g. 2026032001).
@@ -48,7 +52,35 @@ function xmldb_local_lid_upgrade(int $oldversion): bool {
     $dbman = $DB->get_manager();
 
     // --------------------------------------------------------------------
-    // Example upgrade step template — copy and adapt for future migrations.
+    // v0.3.0 — Three-tier enable/disable hierarchy
+    // Adds lid_default_enabled and lid_force_disabled to local_lid_settings.
+    // --------------------------------------------------------------------
+    if ($oldversion < 2026032002) {
+
+        $table = new xmldb_table('local_lid_settings');
+
+        // lid_default_enabled — global default for new forums.
+        $field = new xmldb_field(
+            'lid_default_enabled', XMLDB_TYPE_INTEGER, '1',
+            null, XMLDB_NOTNULL, null, '0', 'cron_batchsize'
+        );
+        if (!$dbman->field_exists($table, $field)) {
+            $dbman->add_field($table, $field);
+        }
+
+        // lid_force_disabled — site-wide override, no teacher can bypass.
+        $field = new xmldb_field(
+            'lid_force_disabled', XMLDB_TYPE_INTEGER, '1',
+            null, XMLDB_NOTNULL, null, '0', 'lid_default_enabled'
+        );
+        if (!$dbman->field_exists($table, $field)) {
+            $dbman->add_field($table, $field);
+        }
+
+        upgrade_plugin_savepoint(true, 2026032002, 'local', 'lid');
+    }
+
+    // --------------------------------------------------------------------
     // --------------------------------------------------------------------
     // if ($oldversion < 2026040100) {
     //
