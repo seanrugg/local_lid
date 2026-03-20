@@ -100,6 +100,7 @@ class process_queue extends \core\task\scheduled_task {
         }
 
         // Claim all candidates atomically.
+        $ids    = array_keys($candidates);
         $idlist = implode(',', array_map('intval', $ids));
         $DB->execute(
             "UPDATE {local_lid_queue}
