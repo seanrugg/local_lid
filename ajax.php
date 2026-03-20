@@ -154,14 +154,51 @@ function handle_trigger(): array {
     }
 
     if ($forumid && $courseid) {
-        // Whole-forum mode — enqueue all post-scope analyses for this forum.
+        // Whole-forum mode — enqueue all posts in this forum.
         $cm = get_coursemodule_from_instance('forum', $forumid, $courseid,
             false, MUST_EXIST);
         $context = context_module::instance($cm->id);
         require_capability('local/lid:triggeranalysis', $context);
 
-        // Get or create analysis records for all posts in this forum that
-        // have not yet been successfully analysed, plus any error ones.
+        // Step 1 — backfill: create analysis records for any forum posts
+        // that don't have one yet. This covers the case where LID was enabled
+        // after posts were already submitted (the observer never fired for them).
+        $existingpostids = $DB->get_fieldset_select(
+            'local_lid_analysis',
+            'postid',
+            "scope = 'post' AND forumid = :forumid",
+            ['forumid' => $forumid]
+        );
+        $existingpostids = array_map('intval', $existingpostids);
+
+        $allposts = $DB->get_records_sql(
+            "SELECT p.id AS postid, p.userid, d.forum AS forumid,
+                    d.course AS courseid, p.discussion AS discussionid
+               FROM {forum_posts} p
+               JOIN {forum_discussions} d ON d.id = p.discussion
+              WHERE d.forum = :forumid
+                AND p.userid > 0",
+            ['forumid' => $forumid]
+        );
+
+        foreach ($allposts as $post) {
+            if (!in_array((int) $post->postid, $existingpostids, true)) {
+                $DB->insert_record('local_lid_analysis', (object) [
+                    'scope'        => 'post',
+                    'postid'       => (int) $post->postid,
+                    'userid'       => (int) $post->userid,
+                    'forumid'      => $forumid,
+                    'courseid'     => $courseid,
+                    'discussionid' => (int) $post->discussionid,
+                    'status'       => 'pending',
+                    'prompt_hash'  => null,
+                    'timecreated'  => time(),
+                    'timemodified' => time(),
+                ]);
+            }
+        }
+
+        // Step 2 — enqueue all pending/error post-scope analyses for this forum.
         $analyses = $DB->get_records_select(
             'local_lid_analysis',
             "scope = 'post' AND forumid = :forumid AND status != 'processing'",
