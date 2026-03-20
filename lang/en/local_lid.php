@@ -211,7 +211,6 @@ $string['error_llm_request_failed']    = 'LLM API request failed: {$a}';
 $string['error_llm_invalid_json']      = 'The LLM returned a response that could not be parsed as valid LID JSON. The raw response has been logged.';
 $string['error_llm_schema_mismatch']   = 'The LLM response did not conform to LID Schema v{$a}. Required fields may be missing or malformed.';
 $string['error_llm_truncated']         = 'The LLM response appears to have been truncated before the JSON was complete. Try increasing the max tokens setting.';
-$string['error_llm_response_exception'] = 'The LLM returned a response in an unrecognised format. Check your API endpoint and model settings.';
 $string['error_forum_not_found']       = 'Forum not found or you do not have permission to access it.';
 $string['error_nopermission']          = 'You do not have permission to perform this action.';
 $string['error_upload_invalid_type']   = 'Only .md files are accepted for prompt upload.';
@@ -232,3 +231,50 @@ $string['privacy_metadata_local_lid_analysis_json']        = 'The structured LID
 $string['privacy_metadata_local_lid_analysis_postid']      = 'The ID of the forum post that was analysed.';
 $string['privacy_metadata_local_lid_analysis_timecreated'] = 'The time the analysis record was created.';
 $string['privacy_metadata_llm_api']                        = 'Post content is sent to a third-party LLM API for analysis. The data sent includes the text of forum posts authored by the user. No data is retained by this plugin beyond the structured JSON output. Institutions are responsible for the data processing terms of their chosen LLM provider.';
+
+// ---------------------------------------------------------------------------
+// Three-tier enable/disable hierarchy — site level
+// ---------------------------------------------------------------------------
+
+$string['settings_heading_enablement']         = 'LID enablement defaults';
+$string['settings_lid_default_enabled']        = 'Enable LID by default for new forums';
+$string['settings_lid_default_enabled_desc']   = 'When enabled, LID analysis will be active for all newly created forums by default. Teachers can override this per forum. When disabled (default), teachers must explicitly enable LID on each forum they want to analyse.';
+$string['settings_lid_force_disabled']         = 'Force disable LID site-wide';
+$string['settings_lid_force_disabled_desc']    = 'When enabled, LID analysis is disabled across the entire site regardless of course or forum settings. No teacher can enable LID while this is on. Use for cost control, security review periods, or scheduled maintenance. Existing analysis data is preserved and will reappear when this is turned off.';
+$string['settings_lid_force_disabled_warning'] = 'LID analysis is currently force-disabled by the site administrator. No analyses will run until this is lifted.';
+
+// ---------------------------------------------------------------------------
+// Three-tier enable/disable hierarchy — course level
+// ---------------------------------------------------------------------------
+
+$string['course_settings_title']               = 'Learning Intelligence — Course Settings';
+$string['course_settings_heading']             = 'Course-level LID configuration';
+$string['course_settings_enable_all']          = 'Enable LID for all forums in this course';
+$string['course_settings_disable_all']         = 'Disable LID for all forums in this course';
+$string['course_settings_enable_all_desc']     = 'Immediately enables LID analysis for every forum in this course. Individual forums can still be disabled afterwards via their own settings.';
+$string['course_settings_disable_all_desc']    = 'Immediately disables LID analysis for every forum in this course. Existing analysis data is preserved and will reappear if LID is re-enabled.';
+$string['course_settings_status']              = 'Current status';
+$string['course_settings_forums_enabled']      = '{$a} forum(s) currently have LID enabled in this course.';
+$string['course_settings_forums_total']        = '{$a} forum(s) total in this course.';
+$string['course_settings_saved']              = 'Course LID settings saved. {$a} forum(s) updated.';
+$string['course_settings_force_disabled']      = 'LID is currently force-disabled at the site level. Contact your site administrator to enable it.';
+$string['nav_coursesettings']                  = 'Learning Intelligence settings';
+
+// ---------------------------------------------------------------------------
+// Three-tier enable/disable hierarchy — forum level (Edit Settings injection)
+// ---------------------------------------------------------------------------
+
+$string['forum_lid_section']                   = 'Learning Intelligence Dashboard';
+$string['forum_lid_enabled_label']             = 'Enable LID analysis';
+$string['forum_lid_enabled_label_help']        = 'When enabled, student posts in this forum will be analysed by the Learning Intelligence system. Scores, competency maps, and Bloom\'s Taxonomy progression will be available to instructors in the LID dashboard. Disable for announcement forums, community forums, or any forum where structured academic analysis is not appropriate.';
+$string['forum_lid_enabled_help']              = 'When enabled, student posts in this forum will be analysed by the Learning Intelligence system. Scores, competency maps, and Bloom\'s Taxonomy progression will be available to instructors in the LID dashboard. Disable for announcement forums, community forums, or any forum where structured academic analysis is not appropriate.';
+$string['forum_lid_force_disabled_notice']     = 'LID analysis is currently disabled site-wide by your administrator and cannot be enabled here.';
+$string['forum_lid_saved']                     = 'Forum LID setting saved.';
+
+// ---------------------------------------------------------------------------
+// Visibility notices (data preserved but hidden)
+// ---------------------------------------------------------------------------
+
+$string['lid_hidden_force_disabled']           = 'Learning Intelligence analysis is currently disabled by the site administrator. Existing data is preserved and will reappear when analysis is re-enabled.';
+$string['lid_hidden_course_disabled']          = 'Learning Intelligence analysis is currently disabled for this course. Existing data is preserved and will reappear if re-enabled.';
+$string['lid_hidden_forum_disabled']           = 'Learning Intelligence analysis is disabled for this forum. Enable it in the forum settings to view the dashboard.';
