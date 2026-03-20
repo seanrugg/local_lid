@@ -59,13 +59,18 @@
  */
 
 define('AJAX_SCRIPT', true);
+define('NO_DEBUG_DISPLAY', true);  // Prevent PHP/Moodle debug output corrupting JSON.
 
 require_once(__DIR__ . '/../../config.php');
 require_once($CFG->dirroot . '/local/lid/lib.php');
 
+// Buffer all output — any stray PHP warnings must not corrupt the JSON response.
+ob_start();
+
 require_login();
 
-// All responses are JSON.
+// All responses are JSON. Discard any buffered debug output first.
+ob_end_clean();
 header('Content-Type: application/json');
 
 // Route by action.
@@ -98,27 +103,33 @@ try {
             break;
 
         default:
+            ob_end_clean();
+            header('Content-Type: application/json');
             http_response_code(400);
             echo json_encode(['error' => true, 'message' => 'Unknown action.']);
             break;
     }
 
 } catch (\required_capability_exception $e) {
+    ob_end_clean();
+    header('Content-Type: application/json');
     http_response_code(403);
     echo json_encode(['error' => true, 'message' => get_string('error_nopermission', 'local_lid')]);
 
 } catch (\moodle_exception $e) {
+    ob_end_clean();
+    header('Content-Type: application/json');
     http_response_code(400);
     echo json_encode(['error' => true, 'message' => $e->getMessage()]);
 
 } catch (\Throwable $e) {
+    ob_end_clean();
+    header('Content-Type: application/json');
     http_response_code(500);
-    $msg = debugging('', DEBUG_DEVELOPER)
-        ? $e->getMessage() . ' in ' . $e->getFile() . ':' . $e->getLine()
-        : 'An unexpected error occurred.';
-    echo json_encode(['error' => true, 'message' => $msg]);
-    debugging('local_lid ajax.php unhandled exception: ' . $e->getMessage() .
-        ' in ' . $e->getFile() . ':' . $e->getLine(), DEBUG_DEVELOPER);
+    echo json_encode([
+        'error'   => true,
+        'message' => $e->getMessage() . ' [' . basename($e->getFile()) . ':' . $e->getLine() . ']',
+    ]);
 }
 
 // =============================================================================
