@@ -76,8 +76,11 @@ $PAGE->navbar->add(
 );
 $PAGE->navbar->add(get_string('nav_studentdashboard', 'local_lid'));
 
-// Load AMD modules.
-$PAGE->requires->js_call_amd('local_lid/dashboard', 'init', []);
+// Load AMD module with page-specific init.
+$PAGE->requires->js_call_amd('local_lid/dashboard', 'initStudentPage', [[
+    'userid'   => (int) $userid,
+    'courseid' => (int) $courseid,
+]]);
 
 // Build renderable.
 $renderable = new \local_lid\output\student_lid_page($student, $course, $context);
