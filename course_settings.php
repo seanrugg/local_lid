@@ -45,6 +45,7 @@ $PAGE->set_course($course);
 $PAGE->set_pagelayout('admin');
 $PAGE->set_title(get_string('course_settings_title', 'local_lid'));
 $PAGE->set_heading(format_string($course->fullname));
+$PAGE->requires->js_call_amd('local_lid/prompt_editor', 'init', []);
 
 $PAGE->navbar->add(
     get_string('pluginname', 'local_lid'),
