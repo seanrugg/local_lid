@@ -422,8 +422,9 @@ function local_lid_coursemodule_edit_post_actions($data, $course): stdClass {
 // =============================================================================
 
 /**
- * Extend course navigation to add a "Learning Intelligence settings" link
- * in the Course administration section for users with configureforum capability.
+ * Extend course navigation to add the LID dashboard link and course
+ * settings link. Works with both classic themes (left-nav courseadmin block)
+ * and Moodle 4.x/5.x Boost theme (secondary nav tabs / More menu).
  *
  * @param navigation_node $navigation
  * @param stdClass        $course
@@ -439,7 +440,8 @@ function local_lid_extend_navigation_course(
         return;
     }
 
-    // Reports tab — Course LID dashboard.
+    // Course LID dashboard — add under Reports if that node exists,
+    // otherwise fall back to the top-level navigation node.
     $reportsnode = $navigation->find('coursereports', navigation_node::TYPE_CONTAINER);
     $parent = $reportsnode ?: $navigation;
 
@@ -453,21 +455,25 @@ function local_lid_extend_navigation_course(
         new pix_icon('icon', get_string('pluginname', 'local_lid'), 'local_lid')
     );
 
-    // Course administration — LID settings (bulk enable/disable).
+    // Course LID settings (bulk enable/disable per forum).
+    // Classic themes: add under the courseadmin node (left nav block).
+    // Boost/modern themes: courseadmin doesn't exist — add directly to the
+    // navigation node, which places it in the More menu tab.
     if (has_capability('local/lid:configureforum', $context)) {
+        $settingsurl = new moodle_url('/local/lid/course_settings.php',
+            ['courseid' => $course->id]);
+
         $adminnode = $navigation->find('courseadmin', navigation_node::TYPE_COURSE);
-        if ($adminnode) {
-            $settingsurl = new moodle_url('/local/lid/course_settings.php',
-                ['courseid' => $course->id]);
-            $adminnode->add(
-                get_string('nav_coursesettings', 'local_lid'),
-                $settingsurl,
-                navigation_node::TYPE_SETTING,
-                null,
-                'local_lid_course_settings',
-                new pix_icon('icon', get_string('pluginname', 'local_lid'), 'local_lid')
-            );
-        }
+        $settingsparent = $adminnode ?: $navigation;
+
+        $settingsparent->add(
+            get_string('nav_coursesettings', 'local_lid'),
+            $settingsurl,
+            navigation_node::TYPE_SETTING,
+            null,
+            'local_lid_course_settings',
+            new pix_icon('icon', get_string('pluginname', 'local_lid'), 'local_lid')
+        );
     }
 }
 
