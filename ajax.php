@@ -440,6 +440,8 @@ function handle_reset_prompt_default(): array {
     ];
 }
 
+/**
+ * Handle 'save_prompt' action — save a course-level prompt override.
  *
  * @return array JSON-serialisable response.
  */
