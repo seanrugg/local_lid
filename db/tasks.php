@@ -23,7 +23,7 @@
  * settings page updates the customised schedule programmatically based on
  * the cron_interval setting (range: 1–1440 minutes).
  *
- * Setting minute="*/1" (every minute) is the most aggressive supported
+ * Setting minute="every 1 minute" is the most aggressive supported
  * interval for high-volume deployments. The task self-limits via the
  * cron_batchsize setting in local_lid_settings regardless of run frequency.
  *
