@@ -56,47 +56,6 @@
 defined('MOODLE_INTERNAL') || die();
 
 // =============================================================================
-// Navigation — Course Reports tab
-// =============================================================================
-
-/**
- * Extend course navigation with a Learning Intelligence link in the Reports
- * section.
- *
- * Fires for every course page load; bails early if the current user does not
- * hold local/lid:viewcoursedashboard in this course context.
- *
- * @param navigation_node $navigation The course navigation node.
- * @param stdClass        $course     The current course record.
- * @param context_course  $context    The course context.
- */
-function local_lid_extend_navigation_course(
-    navigation_node $navigation,
-    stdClass $course,
-    context_course $context
-): void {
-
-    if (!has_capability('local/lid:viewcoursedashboard', $context)) {
-        return;
-    }
-
-    // Find the Reports node; if missing (some themes remove it) append to course root.
-    $reportsnode = $navigation->find('coursereports', navigation_node::TYPE_CONTAINER);
-    $parent = $reportsnode ?: $navigation;
-
-    $url = new moodle_url('/local/lid/report.php', ['courseid' => $course->id]);
-
-    $parent->add(
-        get_string('nav_coursedashboard', 'local_lid'),
-        $url,
-        navigation_node::TYPE_SETTING,
-        null,
-        'local_lid_course',
-        new pix_icon('icon', get_string('pluginname', 'local_lid'), 'local_lid')
-    );
-}
-
-// =============================================================================
 // Navigation — Forum activity tab
 // =============================================================================
 
@@ -318,10 +277,198 @@ function local_lid_seed_default_prompt(): void {
     $record->trigger_manual  = 1;
     $record->cron_interval   = 5;
     $record->cron_batchsize  = 10;
+    $record->lid_default_enabled = 0;
+    $record->lid_force_disabled  = 0;
     $record->timecreated     = time();
     $record->timemodified    = time();
 
     $DB->insert_record('local_lid_settings', $record);
+}
+
+// =============================================================================
+// Forum Edit Settings integration — inject LID toggle
+// =============================================================================
+
+/**
+ * Inject the LID enable/disable toggle into the forum activity's Edit Settings
+ * form (mod_edit.php). Called by Moodle for every activity module — we bail
+ * immediately for anything that isn't mod_forum.
+ *
+ * The toggle appears as a new section "Learning Intelligence Dashboard" at the
+ * bottom of the forum settings form, above the Save buttons.
+ *
+ * @param moodleform_mod $formwrapper  The mod_edit form wrapper.
+ * @param MoodleQuickForm $mform       The underlying HTML_QuickForm object.
+ */
+function local_lid_coursemodule_standard_elements($formwrapper, $mform): void {
+    global $DB;
+
+    // Only apply to forum modules.
+    $current = $formwrapper->get_current();
+    if (empty($current->modulename) || $current->modulename !== 'forum') {
+        return;
+    }
+
+    $courseid = $formwrapper->get_course()->id;
+    $cmid     = $current->coursemodule ?? 0;
+    $forumid  = $current->instance    ?? 0;
+
+    // Check capability — only users who can configure LID see this section.
+    $context = $cmid
+        ? context_module::instance($cmid)
+        : context_course::instance($courseid);
+
+    if (!has_capability('local/lid:configureforum', $context)) {
+        return;
+    }
+
+    // Is LID force-disabled site-wide?
+    $forcedisabled = (bool) get_config('local_lid', 'lid_force_disabled');
+
+    // Resolve current enabled state for this forum.
+    $enabled = false;
+    if ($forumid) {
+        $config = $DB->get_record('local_lid_forum_config', ['forumid' => $forumid]);
+        if ($config !== false) {
+            $enabled = (bool) $config->enabled;
+        } else {
+            // No row yet — use site default.
+            $enabled = (bool) get_config('local_lid', 'lid_default_enabled');
+        }
+    } else {
+        // New forum being created — use site default.
+        $enabled = (bool) get_config('local_lid', 'lid_default_enabled');
+    }
+
+    // Add form section.
+    $mform->addElement('header', 'local_lid_section',
+        get_string('forum_lid_section', 'local_lid'));
+
+    if ($forcedisabled) {
+        // Show a notice — no toggle when force-disabled.
+        $mform->addElement('static', 'local_lid_force_notice', '',
+            html_writer::div(
+                get_string('forum_lid_force_disabled_notice', 'local_lid'),
+                'alert alert-warning'
+            )
+        );
+    } else {
+        $mform->addElement('advcheckbox', 'local_lid_enabled',
+            get_string('forum_lid_enabled_label', 'local_lid'),
+            get_string('forum_lid_enabled_help', 'local_lid'),
+            [], [0, 1]
+        );
+        $mform->setDefault('local_lid_enabled', (int) $enabled);
+        $mform->addHelpButton('local_lid_enabled', 'forum_lid_enabled_label', 'local_lid');
+    }
+}
+
+/**
+ * Save the LID enable/disable state after a forum Edit Settings form is
+ * submitted. Called by Moodle for every activity module — bail for non-forum.
+ *
+ * Creates or updates the local_lid_forum_config row for this forum.
+ *
+ * @param stdClass $data   The submitted form data object.
+ * @param stdClass $course The course record.
+ * @return stdClass        The (possibly modified) data object.
+ */
+function local_lid_coursemodule_edit_post_actions($data, $course): stdClass {
+    global $DB;
+
+    // Only act on forum modules.
+    if (empty($data->modulename) || $data->modulename !== 'forum') {
+        return $data;
+    }
+
+    // Force-disabled site-wide — do not save any forum-level state change.
+    if ((bool) get_config('local_lid', 'lid_force_disabled')) {
+        return $data;
+    }
+
+    $forumid  = (int) ($data->instance ?? 0);
+    $courseid = (int) $course->id;
+
+    if (!$forumid) {
+        return $data;
+    }
+
+    $enabled = isset($data->local_lid_enabled) ? (int) (bool) $data->local_lid_enabled : 0;
+
+    $existing = $DB->get_record('local_lid_forum_config', ['forumid' => $forumid]);
+
+    if ($existing) {
+        $DB->update_record('local_lid_forum_config', (object) [
+            'id'           => $existing->id,
+            'enabled'      => $enabled,
+            'timemodified' => time(),
+        ]);
+    } else {
+        $DB->insert_record('local_lid_forum_config', (object) [
+            'forumid'         => $forumid,
+            'courseid'        => $courseid,
+            'enabled'         => $enabled,
+            'prompt_override' => null,
+            'timecreated'     => time(),
+            'timemodified'    => time(),
+        ]);
+    }
+
+    return $data;
+}
+
+// =============================================================================
+// Course administration navigation — course settings page
+// =============================================================================
+
+/**
+ * Extend course navigation to add a "Learning Intelligence settings" link
+ * in the Course administration section for users with configureforum capability.
+ *
+ * @param navigation_node $navigation
+ * @param stdClass        $course
+ * @param context_course  $context
+ */
+function local_lid_extend_navigation_course(
+    navigation_node $navigation,
+    stdClass $course,
+    context_course $context
+): void {
+
+    if (!has_capability('local/lid:viewcoursedashboard', $context)) {
+        return;
+    }
+
+    // Reports tab — Course LID dashboard.
+    $reportsnode = $navigation->find('coursereports', navigation_node::TYPE_CONTAINER);
+    $parent = $reportsnode ?: $navigation;
+
+    $url = new moodle_url('/local/lid/report.php', ['courseid' => $course->id]);
+    $parent->add(
+        get_string('nav_coursedashboard', 'local_lid'),
+        $url,
+        navigation_node::TYPE_SETTING,
+        null,
+        'local_lid_course',
+        new pix_icon('icon', get_string('pluginname', 'local_lid'), 'local_lid')
+    );
+
+    // Course administration — LID settings (bulk enable/disable).
+    if (has_capability('local/lid:configureforum', $context)) {
+        $adminnode = $navigation->find('courseadmin', navigation_node::TYPE_COURSE);
+        if ($adminnode) {
+            $settingsurl = new moodle_url('/local/lid/course_settings.php',
+                ['courseid' => $course->id]);
+            $adminnode->add(
+                get_string('nav_coursesettings', 'local_lid'),
+                $settingsurl,
+                navigation_node::TYPE_SETTING,
+                null,
+                'local_lid_course_settings',
+                new pix_icon('icon', get_string('pluginname', 'local_lid'), 'local_lid')
+            );
+        }
+    }
 }
 
 // =============================================================================
