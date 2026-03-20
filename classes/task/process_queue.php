@@ -99,24 +99,21 @@ class process_queue extends \core\task\scheduled_task {
             return;
         }
 
-        // Claim all candidates in one pass by setting timeclaimed.
-        // The WHERE timeclaimed IS NULL re-check prevents double-claiming
-        // if another process sneaked in between the SELECT and this UPDATE.
-        $ids          = array_keys($candidates);
-        [$insql, $inparams] = $DB->get_in_or_equal($ids);
+        // Claim all candidates atomically.
+        $idlist = implode(',', array_map('intval', $ids));
         $DB->execute(
             "UPDATE {local_lid_queue}
-                SET timeclaimed = {$now}
-              WHERE id {$insql}
+                SET timeclaimed = :claimtime
+              WHERE id IN ({$idlist})
                 AND timeclaimed IS NULL",
-            $inparams
+            ['claimtime' => $now]
         );
 
-        // Re-fetch to confirm which ones we actually claimed (timeclaimed = $now).
+        // Re-fetch to confirm which ones we actually claimed.
         $claimed = $DB->get_records_select(
             'local_lid_queue',
-            "id {$insql} AND timeclaimed = :claimed",
-            array_merge($inparams, ['claimed' => $now])
+            "id IN ({$idlist}) AND timeclaimed = :claimed",
+            ['claimed' => $now]
         );
 
         if (empty($claimed)) {
@@ -193,13 +190,13 @@ class process_queue extends \core\task\scheduled_task {
             return;
         }
 
-        [$insql, $inparams] = $DB->get_in_or_equal($ids);
+        $idlist = implode(',', array_map('intval', $ids));
         $DB->execute(
             "UPDATE {local_lid_queue}
                 SET timeclaimed = NULL
-              WHERE id {$insql}
+              WHERE id IN ({$idlist})
                 AND timeclaimed = :claimed",
-            array_merge($inparams, ['claimed' => $claimedtime])
+            ['claimed' => $claimedtime]
         );
     }
 }
