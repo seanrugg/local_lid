@@ -76,8 +76,8 @@ defined('MOODLE_INTERNAL') || die();
  */
 class forum_lid_page implements \renderable, \templatable {
 
-    /** @var \stdClass */
-    private \stdClass $cm;
+    /** @var \stdClass|\cm_info */
+    private $cm;
 
     /** @var \stdClass */
     private \stdClass $course;
@@ -85,7 +85,12 @@ class forum_lid_page implements \renderable, \templatable {
     /** @var \context_module */
     private \context_module $context;
 
-    public function __construct(\stdClass $cm, \stdClass $course, \context_module $context) {
+    /**
+     * @param \stdClass|\cm_info $cm      Course module record or cm_info object.
+     * @param \stdClass          $course  Course record.
+     * @param \context_module    $context Module context.
+     */
+    public function __construct($cm, \stdClass $course, \context_module $context) {
         $this->cm      = $cm;
         $this->course  = $course;
         $this->context = $context;
