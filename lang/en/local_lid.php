@@ -233,7 +233,17 @@ $string['privacy_metadata_local_lid_analysis_timecreated'] = 'The time the analy
 $string['privacy_metadata_llm_api']                        = 'Post content is sent to a third-party LLM API for analysis. The data sent includes the text of forum posts authored by the user. No data is retained by this plugin beyond the structured JSON output. Institutions are responsible for the data processing terms of their chosen LLM provider.';
 
 // ---------------------------------------------------------------------------
-// Three-tier enable/disable hierarchy — site level
+// Capability strings — required by Moodle's permissions/roles UI
+// Key format: 'local/lid:capabilityname' → $string['lid:capabilityname']
+// ---------------------------------------------------------------------------
+
+$string['lid:managesitesettings']    = 'Manage Learning Intelligence Dashboard site settings';
+$string['lid:viewcoursedashboard']   = 'View the course-level Learning Intelligence Dashboard';
+$string['lid:viewforumdashboard']    = 'View the forum-level Learning Intelligence Dashboard';
+$string['lid:viewstudentdashboard']  = 'View the student-level Learning Intelligence Dashboard';
+$string['lid:configureforum']        = 'Enable or disable LID analysis for a forum';
+$string['lid:editprompt']            = 'Edit the LID session analyzer prompt template';
+$string['lid:triggeranalysis']       = 'Manually trigger LID analysis for posts or forums';
 // ---------------------------------------------------------------------------
 
 $string['settings_heading_enablement']         = 'LID enablement defaults';
