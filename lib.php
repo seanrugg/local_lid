@@ -224,12 +224,12 @@ function local_lid_extend_navigation_user_settings(
  * admin intervention.
  *
  * Interval mapping:
- *   1 min  → "* * * * *"   (every minute)
- *   5 min  → "*/5 * * * *"
- *   15 min → "*/15 * * * *"
- *   60 min → "0 * * * *"   (top of every hour)
- *   1440   → "0 0 * * *"   (midnight daily)
- *   other  → "*/N * * * *" where N = interval value
+ *   1 min  → every minute
+ *   5 min  → every 5 minutes
+ *   15 min → every 15 minutes
+ *   60 min → top of every hour
+ *   1440   → midnight daily
+ *   other  → every N minutes where N = interval value
  */
 function local_lid_after_config_change(): void {
     global $DB;
