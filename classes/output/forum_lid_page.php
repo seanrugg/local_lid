@@ -192,7 +192,7 @@ class forum_lid_page implements \renderable, \templatable {
             $postanalyses = $DB->get_records(
                 'local_lid_analysis',
                 ['scope' => 'post', 'forumid' => $forumid, 'userid' => $userid],
-                'created ASC'
+                'timecreated ASC'
             );
 
             $studentagg = $DB->get_record('local_lid_analysis', [
