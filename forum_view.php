@@ -71,8 +71,18 @@ $PAGE->requires->js_call_amd('local_lid/dashboard', 'initForumPage', [[
     'triggerUrl' => (new moodle_url('/local/lid/ajax.php'))->out(false),
 ]]);
 
-// Build renderable — cast cm_info to stdClass for compatibility.
-$cmstd     = (object) (array) $cm;
+// Build renderable.
+// get_course_and_cm_from_cmid() returns cm_info in Moodle 4+/5.x.
+// Extract the two numeric properties we need before casting, since
+// cm_info uses magic __get() for computed properties that don't
+// survive (object)(array) casting.
+$cmstd           = new \stdClass();
+$cmstd->id       = (int) $cm->id;
+$cmstd->instance = (int) $cm->instance;
+$cmstd->course   = (int) $cm->course;
+$cmstd->module   = (int) $cm->module;
+$cmstd->name     = $cm->name;
+
 $renderable = new \local_lid\output\forum_lid_page($cmstd, $course, $context);
 $renderer   = $PAGE->get_renderer('local_lid');
 
