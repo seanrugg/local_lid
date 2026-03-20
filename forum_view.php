@@ -64,8 +64,12 @@ $PAGE->navbar->add(
 );
 $PAGE->navbar->add(get_string('nav_forumdashboard', 'local_lid'));
 
-// Load AMD modules.
-$PAGE->requires->js_call_amd('local_lid/dashboard', 'init', []);
+// Load AMD module with page-specific init.
+$PAGE->requires->js_call_amd('local_lid/dashboard', 'initForumPage', [[
+    'forumid'    => (int) $cm->instance,
+    'courseid'   => (int) $course->id,
+    'triggerUrl' => (new moodle_url('/local/lid/ajax.php'))->out(false),
+]]);
 
 // Build renderable.
 $renderable = new \local_lid\output\forum_lid_page($cm, $course, $context);
