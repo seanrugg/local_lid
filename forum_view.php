@@ -71,8 +71,9 @@ $PAGE->requires->js_call_amd('local_lid/dashboard', 'initForumPage', [[
     'triggerUrl' => (new moodle_url('/local/lid/ajax.php'))->out(false),
 ]]);
 
-// Build renderable.
-$renderable = new \local_lid\output\forum_lid_page($cm, $course, $context);
+// Build renderable — cast cm_info to stdClass for compatibility.
+$cmstd     = (object) (array) $cm;
+$renderable = new \local_lid\output\forum_lid_page($cmstd, $course, $context);
 $renderer   = $PAGE->get_renderer('local_lid');
 
 // Output.
