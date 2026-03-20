@@ -365,6 +365,7 @@ function local_lid_coursemodule_standard_elements($formwrapper, $mform): void {
     // Load the forum_config AMD module via PAGE — safe alternative to inline script.
     global $PAGE;
     $PAGE->requires->js_call_amd('local_lid/forum_config', 'init', []);
+}
 
 /**
  * Save the LID enable/disable state after a forum Edit Settings form is
