@@ -192,7 +192,7 @@ class forum_lid_page implements \renderable, \templatable {
             $postanalyses = $DB->get_records(
                 'local_lid_analysis',
                 ['scope' => 'post', 'forumid' => $forumid, 'userid' => $userid],
-                'timecreated ASC'
+                'created ASC'
             );
 
             $studentagg = $DB->get_record('local_lid_analysis', [
@@ -352,7 +352,7 @@ class forum_lid_page implements \renderable, \templatable {
         global $DB;
 
         $post = $DB->get_record('forum_posts',
-            ['id' => $pa->postid], 'id, subject, timecreated, discussion');
+            ['id' => $pa->postid], 'id, subject, created, discussion');
         if (!$post) {
             return null;
         }
@@ -377,7 +377,7 @@ class forum_lid_page implements \renderable, \templatable {
         return [
             'postid'        => (int) $pa->postid,
             'subject'       => format_string($subject),
-            'posted_date'   => userdate($post->timecreated),
+            'posted_date'   => userdate($post->created),
             'analysis_html' => $analysishtml,
             'has_analysis'  => !empty($analysishtml),
             'status'        => $pa->status,
