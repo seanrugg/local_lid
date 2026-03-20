@@ -51,7 +51,33 @@ if ($hassiteconfig) {
     $ADMIN->add('localplugins', $settings);
 
     // =========================================================================
-    // SECTION 1 — LLM API connection
+    // SECTION 1 — LID Enablement defaults
+    // =========================================================================
+
+    $settings->add(new admin_setting_heading(
+        'local_lid/heading_enablement',
+        new lang_string('settings_heading_enablement', 'local_lid'),
+        ''
+    ));
+
+    // Force disable — hard stop, no teacher override.
+    $settings->add(new admin_setting_configcheckbox(
+        'local_lid/lid_force_disabled',
+        new lang_string('settings_lid_force_disabled', 'local_lid'),
+        new lang_string('settings_lid_force_disabled_desc', 'local_lid'),
+        '0'
+    ));
+
+    // Global default for new forums.
+    $settings->add(new admin_setting_configcheckbox(
+        'local_lid/lid_default_enabled',
+        new lang_string('settings_lid_default_enabled', 'local_lid'),
+        new lang_string('settings_lid_default_enabled_desc', 'local_lid'),
+        '0'
+    ));
+
+    // =========================================================================
+    // SECTION 2 — LLM API connection
     // =========================================================================
 
     $settings->add(new admin_setting_heading(
