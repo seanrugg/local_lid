@@ -188,7 +188,12 @@ class observer {
     }
 
     /**
-     * Return true if LID analysis is enabled for the given forum.
+     * Return true if LID analysis is effectively enabled for the given forum,
+     * resolving the full three-tier hierarchy:
+     *
+     *   1. Site force-disable → always false, no override possible.
+     *   2. Forum-level config row → use its enabled value if the row exists.
+     *   3. Site default → fall back to lid_default_enabled.
      *
      * @param int $forumid
      * @return bool
@@ -196,11 +201,19 @@ class observer {
     private static function is_forum_enabled(int $forumid): bool {
         global $DB;
 
-        return (bool) $DB->get_field(
-            'local_lid_forum_config',
-            'enabled',
-            ['forumid' => $forumid]
-        );
+        // Tier 1 — site force-disable is an absolute block.
+        if ((bool) get_config('local_lid', 'lid_force_disabled')) {
+            return false;
+        }
+
+        // Tier 2 — forum-level config row.
+        $config = $DB->get_record('local_lid_forum_config', ['forumid' => $forumid]);
+        if ($config !== false) {
+            return (bool) $config->enabled;
+        }
+
+        // Tier 3 — site default (no forum row exists yet).
+        return (bool) get_config('local_lid', 'lid_default_enabled');
     }
 
     /**
