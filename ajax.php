@@ -113,8 +113,12 @@ try {
 
 } catch (\Throwable $e) {
     http_response_code(500);
-    echo json_encode(['error' => true, 'message' => 'An unexpected error occurred.']);
-    debugging('local_lid ajax.php unhandled exception: ' . $e->getMessage(), DEBUG_DEVELOPER);
+    $msg = debugging('', DEBUG_DEVELOPER)
+        ? $e->getMessage() . ' in ' . $e->getFile() . ':' . $e->getLine()
+        : 'An unexpected error occurred.';
+    echo json_encode(['error' => true, 'message' => $msg]);
+    debugging('local_lid ajax.php unhandled exception: ' . $e->getMessage() .
+        ' in ' . $e->getFile() . ':' . $e->getLine(), DEBUG_DEVELOPER);
 }
 
 // =============================================================================
