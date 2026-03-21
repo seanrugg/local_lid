@@ -19,8 +19,8 @@
  *
  * Supports three provider shapes auto-detected from the endpoint URL:
  *   - Anthropic Messages API  (api.anthropic.com)
- *   - Google Gemini API       (generativelanguage.googleapis.com)
- *   - OpenAI-compatible API   (everything else, including Ollama)
+ *   - Google Gemini native    (generativelanguage.googleapis.com — NOT the /openai/ path)
+ *   - OpenAI-compatible API   (everything else, including Gemini /openai/, Ollama, OpenRouter)
  *
  * @package    local_lid
  * @copyright  2026 Learning Intelligence Dashboard Project Contributors
@@ -94,16 +94,26 @@ class client {
     /**
      * Detect which provider API format to use based on the endpoint URL.
      *
+     * The Google Gemini OpenAI-compatible endpoint contains '/openai/' in its
+     * path and must be treated as PROVIDER_OPENAI — it accepts standard
+     * messages/max_tokens format, not the native Gemini contents/generationConfig
+     * format. Only the native Gemini generateContent endpoint (no '/openai/' in
+     * the path) uses PROVIDER_GEMINI.
+     *
      * @param  string $endpoint
      * @return string One of the PROVIDER_* constants.
      */
     private function detect_provider(string $endpoint): string {
-        if (strpos($endpoint, 'generativelanguage.googleapis.com') !== false) {
-            return self::PROVIDER_GEMINI;
-        }
         if (strpos($endpoint, 'api.anthropic.com') !== false) {
             return self::PROVIDER_ANTHROPIC;
         }
+        // Native Gemini generateContent endpoint — must NOT contain '/openai/'.
+        if (strpos($endpoint, 'generativelanguage.googleapis.com') !== false
+            && strpos($endpoint, '/openai/') === false) {
+            return self::PROVIDER_GEMINI;
+        }
+        // Everything else: OpenAI-compatible (includes Gemini /openai/ path,
+        // Ollama, OpenRouter, standard OpenAI, etc.).
         return self::PROVIDER_OPENAI;
     }
 
@@ -160,7 +170,7 @@ class client {
     private function build_request_body(string $prompt) {
 
         if ($this->provider === self::PROVIDER_GEMINI) {
-            // Gemini generateContent format.
+            // Native Gemini generateContent format.
             $data = [
                 'contents' => [
                     [
@@ -183,7 +193,7 @@ class client {
                 ],
             ];
         } else {
-            // OpenAI-compatible (Ollama, OpenAI, etc.).
+            // OpenAI-compatible: Gemini /openai/ path, Ollama, OpenRouter, etc.
             $data = [
                 'model'      => $this->model,
                 'max_tokens' => $this->maxtokens,
@@ -228,7 +238,7 @@ class client {
             );
         }
 
-        // Gemini generateContent response shape.
+        // Gemini native generateContent response shape.
         if (isset($decoded['candidates'][0]['content']['parts'][0]['text'])) {
             $text = trim($decoded['candidates'][0]['content']['parts'][0]['text']);
             if ($text !== '') {
@@ -252,7 +262,7 @@ class client {
             return trim($decoded['content'][0]['text']);
         }
 
-        // OpenAI-compatible chat completions shape.
+        // OpenAI-compatible chat completions shape (includes Gemini /openai/ path).
         if (isset($decoded['choices'][0]['message']['content'])) {
             return trim($decoded['choices'][0]['message']['content']);
         }
@@ -273,17 +283,15 @@ class client {
      * Build and configure a cURL handle for the API request.
      *
      * Headers are provider-specific:
-     *   Gemini:    x-goog-api-key (key appended to URL as ?key= is also supported
-     *              but header is cleaner)
-     *   Anthropic: x-api-key + anthropic-version
-     *   OpenAI:    Authorization: Bearer
+     *   Gemini native: x-goog-api-key header
+     *   Anthropic:     x-api-key + anthropic-version
+     *   OpenAI-compat: Authorization: Bearer (covers Gemini /openai/ path too)
      *
      * @param  string $body JSON-encoded request body.
      * @return resource     Configured cURL handle.
      */
     private function make_curl_handle(string $body) {
 
-        // Build provider-specific headers.
         $headers = ['Content-Type: application/json', 'User-Agent: MoodleLocalLID/1.0'];
 
         if ($this->provider === self::PROVIDER_GEMINI) {
@@ -293,7 +301,7 @@ class client {
             $headers[] = 'Authorization: Bearer ' . $this->apikey;
             $headers[] = 'anthropic-version: 2023-06-01';
         } else {
-            // OpenAI-compatible (Ollama, etc.).
+            // OpenAI-compatible (Gemini /openai/ path, Ollama, OpenRouter, etc.).
             $headers[] = 'Authorization: Bearer ' . $this->apikey;
         }
 
