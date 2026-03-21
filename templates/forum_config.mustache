@@ -6,16 +6,18 @@
     forum settings tab.
 
     Context fields:
-        forumid          int
-        courseid         int
-        enabled          bool     — current LID state for this forum
-        has_data         bool     — true if analyses exist for this forum
-        ajax_url         string   — ajax.php endpoint
-        prompt_locked    bool     — site admin has locked the prompt
-        can_edit_prompt  bool     — user has local/lid:editprompt
-        prompt_value     string   — current active prompt text for this forum
-        has_prompt_override bool  — forum has its own prompt (not inherited)
-        inherited_from   string   — 'course' | 'site' (where prompt comes from)
+        forumid              int
+        courseid             int
+        enabled              bool     — current LID state for this forum
+        has_data             bool     — true if analyses exist for this forum
+        ajax_url             string   — ajax.php endpoint
+        prompt_locked        bool     — site admin has locked the prompt
+        can_edit_prompt      bool     — user has local/lid:editprompt
+        prompt_value         string   — current active prompt text for this forum
+        has_prompt_override  bool     — forum has its own prompt (not inherited)
+        inherited_from       string   — 'course' | 'site' (where prompt comes from)
+        discussion_model     string   — current model: independent_first | open_engagement | structured_debate
+        discussion_models    array    — [{value, label, description, selected}] for selector
 }}
 {{> local_lid/lid_styles}}
 
@@ -24,6 +26,7 @@
      data-courseid="{{courseid}}"
      data-enabled="{{#enabled}}1{{/enabled}}{{^enabled}}0{{/enabled}}"
      data-has-data="{{#has_data}}1{{/has_data}}{{^has_data}}0{{/has_data}}"
+     data-discussion-model="{{discussion_model}}"
      data-url="{{ajax_url}}"
      style="max-width:800px">
 
@@ -33,7 +36,7 @@
     </div>
 
     {{! ── Enable/disable toggle ───────────────────────────────────────── }}
-    <div style="display:flex;align-items:flex-start;gap:14px;margin-bottom:20px;
+    <div style="display:flex;align-items:flex-start;gap:14px;margin-bottom:16px;
                 padding:16px;background:var(--lid-surface);border:1px solid var(--lid-border);
                 border-radius:var(--lid-radius)">
 
@@ -73,6 +76,76 @@
         </label>
 
         <div class="lid-forum-config-status" style="flex-shrink:0;padding-top:4px"></div>
+    </div>
+
+    {{! ── Discussion model selector ───────────────────────────────────── }}
+    {{! Only shown when LID is enabled. Hidden via lid-forum-model-section class. }}
+    <div class="lid-forum-model-section{{^enabled}} lid-forum-prompt-hidden{{/enabled}}"
+         style="margin-bottom:16px;padding:16px;background:var(--lid-surface);
+                border:1px solid var(--lid-border);border-radius:var(--lid-radius)">
+
+        <div class="lid-panel-title" style="margin-bottom:4px">
+            {{#str}}forum_config_discussion_model, local_lid{{/str}}
+        </div>
+
+        <p class="lid-mono" style="font-size:10px;color:var(--lid-muted);
+                                   margin-bottom:12px;line-height:1.6">
+            {{#str}}forum_config_discussion_model_desc, local_lid{{/str}}
+        </p>
+
+        {{! LID analysis timing notice }}
+        <div class="lid-notice lid-notice-info"
+             style="margin-bottom:14px;padding:10px 12px;background:var(--lid-surface2);
+                    border-left:3px solid var(--lid-accent);border-radius:4px;
+                    font-size:10px;color:var(--lid-muted);line-height:1.6">
+            {{#str}}dashboard_forum_lid_guidance, local_lid{{/str}}
+        </div>
+
+        {{! Model option cards }}
+        <div class="lid-model-options"
+             style="display:flex;flex-direction:column;gap:8px">
+
+            {{#discussion_models}}
+            <label class="lid-model-option{{#selected}} lid-model-option-selected{{/selected}}"
+                   style="display:flex;align-items:flex-start;gap:12px;
+                          padding:12px 14px;border-radius:var(--lid-radius);
+                          border:1px solid {{#selected}}var(--lid-accent){{/selected}}{{^selected}}var(--lid-border){{/selected}};
+                          background:{{#selected}}rgba(0,229,255,0.04){{/selected}}{{^selected}}var(--lid-surface2){{/selected}};
+                          cursor:pointer;transition:border-color 0.15s,background 0.15s">
+
+                <input type="radio"
+                       class="lid-forum-model-radio"
+                       name="lid_discussion_model_{{forumid}}"
+                       value="{{value}}"
+                       {{#selected}}checked{{/selected}}
+                       style="margin-top:2px;flex-shrink:0;accent-color:var(--lid-accent)">
+
+                <span style="flex:1">
+                    <span style="font-size:12px;font-weight:600;color:var(--lid-text);
+                                 display:block;margin-bottom:3px">
+                        {{label}}
+                    </span>
+                    <span class="lid-mono" style="font-size:10px;color:var(--lid-muted);
+                                                  line-height:1.5;display:block">
+                        {{description}}
+                    </span>
+                </span>
+
+            </label>
+            {{/discussion_models}}
+
+        </div>
+
+        {{! Save model button — saves independently of the enable toggle }}
+        <div style="margin-top:12px;display:flex;align-items:center;gap:10px">
+            <button class="lid-btn lid-btn-primary lid-model-save-btn"
+                    style="font-size:10px">
+                Save assessment model
+            </button>
+            <span class="lid-model-save-status lid-mono"
+                  style="font-size:10px;color:var(--lid-muted)"></span>
+        </div>
+
     </div>
 
     {{! ── Prompt override section ─────────────────────────────────────── }}
@@ -198,5 +271,13 @@
 .lid-prompt-textarea:focus {
     border-color: var(--lid-accent) !important;
     box-shadow: 0 0 0 2px rgba(0,229,255,0.08);
+}
+.lid-model-option:hover {
+    border-color: var(--lid-accent) !important;
+    background: rgba(0,229,255,0.03) !important;
+}
+.lid-model-option-selected {
+    border-color: var(--lid-accent) !important;
+    background: rgba(0,229,255,0.04) !important;
 }
 </style>
