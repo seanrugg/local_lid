@@ -29,19 +29,33 @@ defined('MOODLE_INTERNAL') || die();
 /**
  * Assembles the full LLM prompt for a given analysis context.
  *
- * Prompt resolution order (most specific wins):
+ * Prompt resolution order for legacy post-scope analyses (most specific wins):
  *   1. Forum-level prompt_override in local_lid_forum_config
- *      (only used when prompt_locked = 0 at site level)
+ *      (only if prompt_locked = 0 at site level)
  *   2. Course-level prompt_template in local_lid_settings (courseid > 0)
- *      (only used when prompt_locked = 0 at site level)
+ *      (only if prompt_locked = 0 at site level)
  *   3. Site-level prompt_template in local_lid_settings (courseid = 0)
  *
- * The forum-post preamble (prompts/forum-post-preamble.md) is always
- * prepended to calibrate the LLM for shorter forum content. This is not
- * user-editable — it is a fixed calibration layer applied on top of
- * whatever prompt template is active.
+ * For student_forum and thread scope analyses, prompts/forum-discussion-analyzer.md
+ * is used directly and bypasses the resolution chain. This is the fixed assessment
+ * instrument for closed discussions and must not be overridden at forum or course level.
  *
- * Final prompt structure sent to the LLM:
+ * The discussion_model field from local_lid_forum_config is injected into the context
+ * header so the LLM applies the correct Critical Discourse variant (Rubric 2).
+ *
+ * Exact word_count and character_count are computed in PHP from the assembled post
+ * content and injected into the context header — the LLM reads them directly rather
+ * than estimating them.
+ *
+ * Final structure — student_forum / thread analyses:
+ *
+ *   [CONTEXT HEADER]          ← includes discussion_model, word_count, character_count
+ *   ---
+ *   [FORUM DISCUSSION ANALYZER PROMPT]
+ *   ---
+ *   [ASSEMBLED POST CONTENT]  ← posts annotated with per-post word counts
+ *
+ * Final structure — legacy post-scope analyses:
  *
  *   [PREAMBLE]
  *   ---
@@ -49,12 +63,53 @@ defined('MOODLE_INTERNAL') || die();
  *   ---
  *   [POST CONTENT BLOCK]
  *
+ * Valid discussion_model values (stored in local_lid_forum_config.discussion_model):
+ *   independent_first  — learners post original response before seeing peers
+ *   open_engagement    — learners can read all posts before contributing (default)
+ *   structured_debate  — learners argue assigned or chosen positions
+ *
  * Usage:
  *   $builder = new \local_lid\llm\prompt_builder($courseid, $forumid);
- *   $prompt  = $builder->build_for_post($postrecord);
- *   $hash    = $builder->get_prompt_hash(); // SHA-256 of active template.
+ *
+ *   // Learner forum assessment (primary path):
+ *   $prompt = $builder->build_for_student_forum($userid, $forumname);
+ *
+ *   // Thread assessment (instructor view):
+ *   $prompt = $builder->build_for_thread_by_id($discussionid, $subject);
+ *
+ *   // Legacy single post:
+ *   $prompt = $builder->build_for_post($postrecord);
+ *
+ *   $hash      = $builder->get_prompt_hash();
+ *   $forumhash = $builder->get_forum_analyzer_hash();
  */
 class prompt_builder {
+
+    /** Minimum word count for a post to be considered substantive. */
+    const SUBSTANTIVE_WORD_THRESHOLD = 40;
+
+    /** Valid discussion model values. */
+    const MODEL_INDEPENDENT_FIRST = 'independent_first';
+    const MODEL_OPEN_ENGAGEMENT   = 'open_engagement';
+    const MODEL_STRUCTURED_DEBATE = 'structured_debate';
+
+    /**
+     * Human-readable descriptions for each discussion model.
+     * Displayed in the forum LID config UI so the instructor understands
+     * which prompt variant will be applied to their forum.
+     */
+    const MODEL_DESCRIPTIONS = [
+        self::MODEL_INDEPENDENT_FIRST =>
+            'Independent First — Learners post their own original response before seeing peers. ' .
+            'Assessment weights the original contribution heavily. Peer replies are engagement ' .
+            'evidence but secondary to independent reasoning.',
+        self::MODEL_OPEN_ENGAGEMENT   =>
+            'Open Engagement — Learners can read all posts before contributing. Peer-directed ' .
+            'critical discourse, synthesis, and constructive challenge are the primary expected behaviours.',
+        self::MODEL_STRUCTURED_DEBATE =>
+            'Structured Debate — Learners argue assigned or chosen positions. Assessment focuses ' .
+            'on advocacy, counterargument, evidence quality, and position defence.',
+    ];
 
     /** @var int Course id for prompt resolution. */
     private int $courseid;
@@ -71,29 +126,125 @@ class prompt_builder {
     /** @var string The forum-post preamble loaded from file. */
     private string $preamble = '';
 
+    /** @var string The forum discussion analyzer prompt loaded from file. */
+    private string $forumanalyzer = '';
+
+    /** @var string The discussion model resolved from local_lid_forum_config. */
+    private string $discussionmodel = self::MODEL_OPEN_ENGAGEMENT;
+
     /**
-     * Constructor — resolves and caches the active prompt template.
+     * Constructor — resolves and caches the active prompt template and discussion model.
      *
      * @param int      $courseid Course id.
      * @param int|null $forumid  Forum id (null for course-level analyses).
      */
     public function __construct(int $courseid, ?int $forumid = null) {
-        $this->courseid = $courseid;
-        $this->forumid  = $forumid;
+        $this->courseid        = $courseid;
+        $this->forumid         = $forumid;
+        $this->preamble        = $this->load_preamble();
+        $this->forumanalyzer   = $this->load_forum_analyzer();
+        $this->activetemplate  = $this->resolve_template();
+        $this->prompthash      = hash('sha256', $this->activetemplate);
+        $this->discussionmodel = $this->resolve_discussion_model();
+    }
 
-        $this->preamble       = $this->load_preamble();
-        $this->activetemplate = $this->resolve_template();
-        $this->prompthash     = hash('sha256', $this->activetemplate);
+    // -------------------------------------------------------------------------
+    // Public — build methods
+    // -------------------------------------------------------------------------
+
+    /**
+     * Build the complete prompt for a learner's full participation in a forum.
+     *
+     * Fetches all posts by the given user in the given forum, groups them by
+     * discussion thread, annotates each post with its word count and
+     * substantive/short classification. Computes exact word_count and
+     * character_count totals and injects them into the context header along
+     * with the discussion_model.
+     *
+     * Uses the forum discussion analyzer prompt — not the session analyzer
+     * or any course/forum-level prompt override.
+     *
+     * @param  int    $userid    Moodle user id of the learner.
+     * @param  string $forumname Human-readable forum name for the context header.
+     * @return string            Complete prompt ready to send to the LLM.
+     *                           Empty string if the user has no posts in this forum.
+     */
+    public function build_for_student_forum(int $userid, string $forumname): string {
+        global $DB;
+
+        if (!$this->forumid) {
+            return '';
+        }
+
+        $sql = "SELECT fp.id, fp.discussion, fp.userid, fp.message,
+                       fp.subject, fp.timecreated,
+                       fd.name AS discussion_name
+                  FROM {forum_posts} fp
+                  JOIN {forum_discussions} fd ON fd.id = fp.discussion
+                 WHERE fd.forum = :forumid
+                   AND fp.userid = :userid
+              ORDER BY fp.timecreated ASC";
+
+        $posts = $DB->get_records_sql($sql, [
+            'forumid' => $this->forumid,
+            'userid'  => $userid,
+        ]);
+
+        if (empty($posts)) {
+            return '';
+        }
+
+        $postsarr = array_values($posts);
+        $stats    = $this->compute_post_stats($postsarr);
+        $header   = $this->build_student_forum_header($forumname, $stats);
+        $content  = $this->format_student_forum_content($postsarr, $forumname);
+
+        return $this->assemble_with_context($header, $this->forumanalyzer, $content);
     }
 
     /**
-     * Build the complete prompt for a single forum post.
+     * Build the complete prompt for all posts in a single discussion thread.
      *
-     * Fetches the post and its parent discussion subject from the database,
-     * formats them into a content block, and assembles the full prompt.
+     * Fetches all posts in the given discussion, pseudonymises authors as
+     * Participant A, B, etc., annotates word counts, and assembles a context
+     * header including the discussion_model, exact word_count, and character_count.
      *
-     * @param  \stdClass $post  The forum_posts record (must have id, message, subject).
-     * @return string           The complete prompt string ready to send to the LLM.
+     * @param  int    $discussionid  forum_discussions.id to analyse.
+     * @param  string $subject       Discussion subject line.
+     * @return string                Complete prompt. Empty if no posts exist.
+     */
+    public function build_for_thread_by_id(int $discussionid, string $subject): string {
+        global $DB;
+
+        $sql = "SELECT fp.id, fp.discussion, fp.userid, fp.message,
+                       fp.subject, fp.timecreated
+                  FROM {forum_posts} fp
+                 WHERE fp.discussion = :discussionid
+              ORDER BY fp.timecreated ASC";
+
+        $posts = $DB->get_records_sql($sql, ['discussionid' => $discussionid]);
+
+        if (empty($posts)) {
+            return '';
+        }
+
+        $postsarr          = array_values($posts);
+        $stats             = $this->compute_post_stats($postsarr);
+        $participant_count = count(array_unique(array_column($postsarr, 'userid')));
+        $header            = $this->build_thread_header($subject, $stats, $participant_count);
+        $content           = $this->format_thread_content_annotated($postsarr, $subject);
+
+        return $this->assemble_with_context($header, $this->forumanalyzer, $content);
+    }
+
+    /**
+     * Build the complete prompt for a single forum post (legacy).
+     *
+     * Kept for compatibility. New pipelines should use build_for_student_forum()
+     * or build_for_thread_by_id().
+     *
+     * @param  \stdClass $post  forum_posts record (must have id, message, subject).
+     * @return string           Complete prompt string.
      */
     public function build_for_post(\stdClass $post): string {
         $content = $this->format_post_content($post);
@@ -101,15 +252,13 @@ class prompt_builder {
     }
 
     /**
-     * Build the complete prompt for a set of posts (e.g. a full discussion thread).
+     * Build the complete prompt for an array of posts (legacy thread variant).
      *
-     * Posts are presented in chronological order with author pseudonymisation:
-     * students are identified as "Student A", "Student B" etc. to avoid the
-     * LLM making assumptions based on names, while preserving threading context.
+     * Kept for compatibility. Prefer build_for_thread_by_id() for new code.
      *
-     * @param  \stdClass[] $posts   Array of forum_posts records, ordered by timecreated ASC.
-     * @param  string      $subject The discussion subject line.
-     * @return string               The complete prompt string.
+     * @param  \stdClass[] $posts   Posts ordered by timecreated ASC.
+     * @param  string      $subject Discussion subject line.
+     * @return string               Complete prompt string.
      */
     public function build_for_thread(array $posts, string $subject): string {
         $content = $this->format_thread_content($posts, $subject);
@@ -117,10 +266,7 @@ class prompt_builder {
     }
 
     /**
-     * Return the SHA-256 hash of the active prompt template.
-     *
-     * Stored in local_lid_analysis.prompt_hash to detect stale analyses
-     * when the prompt is later changed.
+     * Return the SHA-256 hash of the active session analyzer prompt template.
      *
      * @return string 64-character hex string.
      */
@@ -129,13 +275,67 @@ class prompt_builder {
     }
 
     /**
-     * Return the active prompt template (without preamble or content).
+     * Return the SHA-256 hash of the forum discussion analyzer prompt.
+     *
+     * Stored as prompt_hash for student_forum and thread analyses since those
+     * bypass the normal prompt resolution chain.
+     *
+     * @return string 64-character hex string.
+     */
+    public function get_forum_analyzer_hash(): string {
+        return hash('sha256', $this->forumanalyzer);
+    }
+
+    /**
+     * Return the active session analyzer template text.
      * Used by the prompt editor to show what template is in effect.
      *
      * @return string
      */
     public function get_active_template(): string {
         return $this->activetemplate;
+    }
+
+    /**
+     * Return the forum discussion analyzer prompt text.
+     * Used by the forum LID config UI to show the active assessment instrument.
+     *
+     * @return string
+     */
+    public function get_forum_analyzer_template(): string {
+        return $this->forumanalyzer;
+    }
+
+    /**
+     * Return the resolved discussion model for this forum.
+     *
+     * @return string One of the MODEL_* constants.
+     */
+    public function get_discussion_model(): string {
+        return $this->discussionmodel;
+    }
+
+    /**
+     * Return human-readable descriptions for all discussion models.
+     * Used to populate the forum LID config UI selector with help text.
+     *
+     * @return array Keyed by model constant value.
+     */
+    public static function get_model_descriptions(): array {
+        return self::MODEL_DESCRIPTIONS;
+    }
+
+    /**
+     * Compute post statistics for a set of posts and return them.
+     *
+     * Exposed as public so process_queue and other callers can access stats
+     * without re-fetching posts (e.g. for logging or meta.notes generation).
+     *
+     * @param  \stdClass[] $posts Array of post records (must have message, discussion).
+     * @return array              See compute_post_stats() return doc.
+     */
+    public function get_post_stats(array $posts): array {
+        return $this->compute_post_stats($posts);
     }
 
     // -------------------------------------------------------------------------
@@ -152,7 +352,6 @@ class prompt_builder {
 
         $sitelocked = (bool) $this->get_site_setting('prompt_locked');
 
-        // If the prompt is locked, skip forum and course overrides entirely.
         if (!$sitelocked && $this->forumid) {
             $forumoverride = $DB->get_field(
                 'local_lid_forum_config',
@@ -175,15 +374,42 @@ class prompt_builder {
             }
         }
 
-        // Fall back to site-level template.
         $sitetemplate = $this->get_site_setting('prompt_template');
         if (!empty($sitetemplate)) {
             return trim($sitetemplate);
         }
 
-        // Last resort — load from the shipped file (handles edge case where
-        // the DB row was deleted but the file is intact).
         return $this->load_default_template_from_file();
+    }
+
+    /**
+     * Resolve the discussion model for this forum from local_lid_forum_config.
+     *
+     * Falls back to open_engagement if no config row exists or if the stored
+     * value is not one of the three recognised model constants.
+     *
+     * @return string One of the MODEL_* constants.
+     */
+    private function resolve_discussion_model(): string {
+        global $DB;
+
+        if (!$this->forumid) {
+            return self::MODEL_OPEN_ENGAGEMENT;
+        }
+
+        $model = $DB->get_field(
+            'local_lid_forum_config',
+            'discussion_model',
+            ['forumid' => $this->forumid]
+        );
+
+        $valid = [
+            self::MODEL_INDEPENDENT_FIRST,
+            self::MODEL_OPEN_ENGAGEMENT,
+            self::MODEL_STRUCTURED_DEBATE,
+        ];
+
+        return in_array($model, $valid, true) ? $model : self::MODEL_OPEN_ENGAGEMENT;
     }
 
     /**
@@ -198,7 +424,21 @@ class prompt_builder {
     }
 
     /**
-     * Load the default prompt template from the shipped .md file.
+     * Load the forum discussion analyzer from prompts/forum-discussion-analyzer.md.
+     *
+     * Fixed assessment instrument for student_forum and thread analyses.
+     * Not user-editable; bypasses the prompt resolution chain entirely.
+     *
+     * @return string Analyzer text, or empty string if the file is missing.
+     */
+    private function load_forum_analyzer(): string {
+        global $CFG;
+        $path = $CFG->dirroot . '/local/lid/prompts/forum-discussion-analyzer.md';
+        return file_exists($path) ? trim(file_get_contents($path)) : '';
+    }
+
+    /**
+     * Load the default session analyzer template from the shipped .md file.
      *
      * @return string Template text, or empty string if the file is missing.
      */
@@ -220,30 +460,218 @@ class prompt_builder {
     }
 
     // -------------------------------------------------------------------------
+    // Private — context header builders
+    // -------------------------------------------------------------------------
+
+    /**
+     * Build the context header for a student_forum analysis.
+     *
+     * Includes exact word_count and character_count so the LLM reads them
+     * directly rather than estimating. Includes discussion_model so the LLM
+     * applies the correct Critical Discourse variant.
+     *
+     * @param  string $forumname Human-readable forum name.
+     * @param  array  $stats     Output of compute_post_stats().
+     * @return string
+     */
+    private function build_student_forum_header(string $forumname, array $stats): string {
+        $modeldesc = self::MODEL_DESCRIPTIONS[$this->discussionmodel]
+            ?? self::MODEL_DESCRIPTIONS[self::MODEL_OPEN_ENGAGEMENT];
+
+        $lines = [
+            '## ANALYSIS CONTEXT',
+            '',
+            'Scope:              Student Forum Assessment (student_forum)',
+            'Forum:              ' . $forumname,
+            'discussion_model:   ' . $this->discussionmodel,
+            'Model description:  ' . $modeldesc,
+            '',
+            'Post composition:',
+            '  Total posts:      ' . $stats['total_posts'],
+            '  Threads:          ' . $stats['thread_count'] . ' discussion thread(s) contributed to',
+            '  Substantive (≥'   . self::SUBSTANTIVE_WORD_THRESHOLD . ' words): '
+                . $stats['substantive_count']
+                . ($stats['substantive_count'] > 0
+                    ? ' (avg ' . $stats['substantive_avg_words'] . ' words)' : ''),
+            '  Short (<'         . self::SUBSTANTIVE_WORD_THRESHOLD . ' words):        '
+                . $stats['short_count']
+                . ($stats['short_count'] > 0
+                    ? ' (avg ' . $stats['short_avg_words'] . ' words)' : ''),
+            '',
+            'Exact totals (PHP-calculated — use these values directly):',
+            '  word_count:       ' . $stats['total_words'],
+            '  character_count:  ' . $stats['total_characters'],
+            '',
+            'This is a retrospective assessment of the learner\'s complete participation'
+                . ' in a closed forum discussion. Do not infer activity beyond what is present below.',
+            '',
+        ];
+
+        return implode("\n", $lines);
+    }
+
+    /**
+     * Build the context header for a thread analysis.
+     *
+     * @param  string $subject           Discussion subject line.
+     * @param  array  $stats             Output of compute_post_stats().
+     * @param  int    $participant_count Number of distinct authors.
+     * @return string
+     */
+    private function build_thread_header(string $subject, array $stats, int $participant_count): string {
+        $modeldesc = self::MODEL_DESCRIPTIONS[$this->discussionmodel]
+            ?? self::MODEL_DESCRIPTIONS[self::MODEL_OPEN_ENGAGEMENT];
+
+        $lines = [
+            '## ANALYSIS CONTEXT',
+            '',
+            'Scope:              Discussion Thread Assessment (thread)',
+            'Thread:             ' . $subject,
+            'discussion_model:   ' . $this->discussionmodel,
+            'Model description:  ' . $modeldesc,
+            'Participants:       ' . $participant_count . ' learner(s)',
+            '',
+            'Post composition:',
+            '  Total posts:      ' . $stats['total_posts'],
+            '  Substantive (≥'   . self::SUBSTANTIVE_WORD_THRESHOLD . ' words): '
+                . $stats['substantive_count']
+                . ($stats['substantive_count'] > 0
+                    ? ' (avg ' . $stats['substantive_avg_words'] . ' words)' : ''),
+            '  Short (<'         . self::SUBSTANTIVE_WORD_THRESHOLD . ' words):        '
+                . $stats['short_count']
+                . ($stats['short_count'] > 0
+                    ? ' (avg ' . $stats['short_avg_words'] . ' words)' : ''),
+            '',
+            'Exact totals (PHP-calculated — use these values directly):',
+            '  word_count:       ' . $stats['total_words'],
+            '  character_count:  ' . $stats['total_characters'],
+            '',
+            'Authors are pseudonymised as Participant A, Participant B, etc.'
+                . ' Retrospective assessment of the complete thread after discussion closed.',
+            '',
+        ];
+
+        return implode("\n", $lines);
+    }
+
+    // -------------------------------------------------------------------------
     // Private — content formatting
     // -------------------------------------------------------------------------
 
     /**
-     * Format a single forum post into a content block for the LLM.
+     * Format a learner's complete forum participation grouped by thread.
      *
-     * Strips HTML tags from the message body (Moodle stores forum posts as
-     * HTML). Includes the discussion subject for context.
+     * Posts are grouped by discussion thread, presented chronologically within
+     * each thread. Each post is annotated with its word count and substantive/short
+     * classification so the LLM can apply weighting rules without counting itself.
      *
-     * @param  \stdClass $post The forum_posts record.
+     * @param  \stdClass[] $posts     All posts by the learner, ordered by timecreated ASC.
+     *                                Each record must have: id, discussion, message,
+     *                                timecreated, discussion_name.
+     * @param  string      $forumname Forum name (used in section header).
+     * @return string
+     */
+    private function format_student_forum_content(array $posts, string $forumname): string {
+        // Group posts by discussion.
+        $threads = [];
+        foreach ($posts as $post) {
+            $did = $post->discussion;
+            if (!isset($threads[$did])) {
+                $threads[$did] = [
+                    'name'  => $post->discussion_name ?? ('Thread ' . $did),
+                    'posts' => [],
+                ];
+            }
+            $threads[$did]['posts'][] = $post;
+        }
+
+        $lines     = [];
+        $lines[]   = '## LEARNER FORUM PARTICIPATION';
+        $lines[]   = 'Forum: ' . $forumname;
+        $lines[]   = '';
+        $threadnum = 1;
+
+        foreach ($threads as $thread) {
+            $lines[] = '### Thread ' . $threadnum . ': ' . $thread['name'];
+            $lines[] = '';
+            $threadnum++;
+
+            foreach ($thread['posts'] as $post) {
+                $body      = $this->clean_post_body($post->message ?? '');
+                $wordcount = $this->count_words($body);
+                $date      = userdate($post->timecreated,
+                    get_string('strftimedatetimeshort', 'langconfig'));
+                $label     = $wordcount >= self::SUBSTANTIVE_WORD_THRESHOLD
+                    ? '[' . $wordcount . ' words — substantive]'
+                    : '[' . $wordcount . ' words — short]';
+
+                $lines[] = '--- Post · ' . $date . ' · ' . $label . ' ---';
+                $lines[] = $body;
+                $lines[] = '';
+            }
+        }
+
+        return implode("\n", $lines);
+    }
+
+    /**
+     * Format all posts in a thread with pseudonymisation and word-count annotation.
+     *
+     * Used by build_for_thread_by_id(). Authors mapped to Participant A, B, etc.
+     *
+     * @param  \stdClass[] $posts   All posts in the thread, ordered by timecreated ASC.
+     * @param  string      $subject Discussion subject.
+     * @return string
+     */
+    private function format_thread_content_annotated(array $posts, string $subject): string {
+        $authormap = [];
+        $letter    = 'A';
+
+        $lines   = [];
+        $lines[] = '## DISCUSSION THREAD';
+        $lines[] = 'Topic: ' . $subject;
+        $lines[] = '';
+
+        foreach ($posts as $post) {
+            $uid = $post->userid ?? 0;
+            if (!isset($authormap[$uid])) {
+                $authormap[$uid] = 'Participant ' . $letter;
+                $letter++;
+            }
+            $author    = $authormap[$uid];
+            $date      = userdate($post->timecreated,
+                get_string('strftimedatetimeshort', 'langconfig'));
+            $body      = $this->clean_post_body($post->message ?? '');
+            $wordcount = $this->count_words($body);
+            $label     = $wordcount >= self::SUBSTANTIVE_WORD_THRESHOLD
+                ? '[' . $wordcount . ' words — substantive]'
+                : '[' . $wordcount . ' words — short]';
+
+            $lines[] = '--- ' . $author . ' · ' . $date . ' · ' . $label . ' ---';
+            $lines[] = $body;
+            $lines[] = '';
+        }
+
+        return implode("\n", $lines);
+    }
+
+    /**
+     * Format a single post into a content block (legacy).
+     *
+     * @param  \stdClass $post forum_posts record.
      * @return string
      */
     private function format_post_content(\stdClass $post): string {
         global $DB;
 
-        // Fetch discussion subject if not already on the record.
         $subject = $post->subject ?? '';
         if (empty($subject) && !empty($post->discussion)) {
             $subject = $DB->get_field('forum_discussions', 'name', ['id' => $post->discussion]);
         }
 
-        $body = $this->clean_post_body($post->message ?? '');
-
+        $body  = $this->clean_post_body($post->message ?? '');
         $lines = [];
+
         if (!empty($subject)) {
             $lines[] = 'Discussion topic: ' . trim($subject);
             $lines[] = '';
@@ -255,11 +683,7 @@ class prompt_builder {
     }
 
     /**
-     * Format an array of posts (a discussion thread) into a content block.
-     *
-     * Authors are pseudonymised to "Participant A", "Participant B" etc.
-     * to prevent name-based bias in the LLM analysis. The mapping is
-     * deterministic within a build call but not persisted.
+     * Format an array of posts (legacy thread variant, no word-count annotation).
      *
      * @param  \stdClass[] $posts   Posts ordered by timecreated ASC.
      * @param  string      $subject Discussion subject.
@@ -268,8 +692,8 @@ class prompt_builder {
     private function format_thread_content(array $posts, string $subject): string {
         $authormap = [];
         $letter    = 'A';
+        $lines     = [];
 
-        $lines = [];
         if (!empty($subject)) {
             $lines[] = 'Discussion topic: ' . trim($subject);
             $lines[] = '';
@@ -281,11 +705,10 @@ class prompt_builder {
                 $authormap[$uid] = 'Participant ' . $letter;
                 $letter++;
             }
-            $author = $authormap[$uid];
-            $date   = userdate($post->timecreated, get_string('strftimedatetimeshort', 'langconfig'));
-            $body   = $this->clean_post_body($post->message ?? '');
-
-            $lines[] = "--- {$author} ({$date}) ---";
+            $date    = userdate($post->timecreated,
+                get_string('strftimedatetimeshort', 'langconfig'));
+            $body    = $this->clean_post_body($post->message ?? '');
+            $lines[] = "--- {$authormap[$uid]} ({$date}) ---";
             $lines[] = $body;
             $lines[] = '';
         }
@@ -294,28 +717,87 @@ class prompt_builder {
     }
 
     /**
-     * Strip HTML and clean up a forum post message body for LLM consumption.
+     * Strip HTML and clean a forum post body for LLM consumption.
      *
-     * Converts block-level HTML elements to newlines before stripping tags
-     * so the logical structure of the text is preserved.
-     *
-     * @param  string $html Raw HTML message body from forum_posts.message.
+     * @param  string $html Raw HTML from forum_posts.message.
      * @return string       Plain text.
      */
     private function clean_post_body(string $html): string {
-        // Convert common block elements to newlines.
         $html = preg_replace('/<\/?(p|br|div|li|tr|h[1-6])[^>]*>/i', "\n", $html);
-
-        // Strip remaining tags.
         $text = strip_tags($html);
-
-        // Decode HTML entities.
         $text = html_entity_decode($text, ENT_QUOTES | ENT_HTML5, 'UTF-8');
-
-        // Normalise whitespace — collapse runs of blank lines to a single blank line.
         $text = preg_replace('/\n{3,}/', "\n\n", $text);
-
         return trim($text);
+    }
+
+    /**
+     * Count words in a plain-text string.
+     *
+     * @param  string $text Plain text after clean_post_body.
+     * @return int          Word count.
+     */
+    private function count_words(string $text): int {
+        return empty(trim($text)) ? 0 : str_word_count(trim($text));
+    }
+
+    /**
+     * Compute post composition statistics for a set of posts.
+     *
+     * Word count and character count are exact PHP calculations injected into
+     * the context header so the LLM reads them directly. All other stats are
+     * used for context header composition and meta.notes generation.
+     *
+     * @param  \stdClass[] $posts Array of post records (must have message, discussion).
+     * @return array {
+     *   total_posts           int,
+     *   substantive_count     int,
+     *   short_count           int,
+     *   substantive_avg_words int,
+     *   short_avg_words       int,
+     *   total_words           int   — exact total word count across all posts,
+     *   total_characters      int   — exact total character count across all posts,
+     *   thread_count          int,
+     * }
+     */
+    private function compute_post_stats(array $posts): array {
+        $substantive_words = [];
+        $short_words       = [];
+        $threads           = [];
+        $total_chars       = 0;
+
+        foreach ($posts as $post) {
+            $body  = $this->clean_post_body($post->message ?? '');
+            $words = $this->count_words($body);
+            $chars = mb_strlen($body, 'UTF-8');
+
+            $total_chars += $chars;
+
+            if ($words >= self::SUBSTANTIVE_WORD_THRESHOLD) {
+                $substantive_words[] = $words;
+            } else {
+                $short_words[] = $words;
+            }
+
+            if (!empty($post->discussion)) {
+                $threads[$post->discussion] = true;
+            }
+        }
+
+        $sub_count   = count($substantive_words);
+        $short_count = count($short_words);
+
+        return [
+            'total_posts'           => count($posts),
+            'substantive_count'     => $sub_count,
+            'short_count'           => $short_count,
+            'substantive_avg_words' => $sub_count > 0
+                ? (int) round(array_sum($substantive_words) / $sub_count) : 0,
+            'short_avg_words'       => $short_count > 0
+                ? (int) round(array_sum($short_words) / $short_count) : 0,
+            'total_words'           => array_sum($substantive_words) + array_sum($short_words),
+            'total_characters'      => $total_chars,
+            'thread_count'          => count($threads),
+        ];
     }
 
     // -------------------------------------------------------------------------
@@ -323,10 +805,42 @@ class prompt_builder {
     // -------------------------------------------------------------------------
 
     /**
-     * Assemble the final prompt string from preamble + template + content.
+     * Assemble a prompt with context header, prompt template, and content.
      *
-     * @param  string $content The formatted post/thread content block.
-     * @return string          The complete prompt.
+     * Used for student_forum and thread analyses.
+     *
+     * Structure:
+     *   [CONTEXT HEADER]
+     *   ---
+     *   [PROMPT TEMPLATE]
+     *   ---
+     *   [CONTENT]
+     *
+     * @param  string $header   Context header block.
+     * @param  string $template Prompt template (forum analyzer).
+     * @param  string $content  Formatted post content.
+     * @return string           Complete prompt.
+     */
+    private function assemble_with_context(string $header, string $template, string $content): string {
+        return implode("\n", [
+            $header,
+            '---',
+            '',
+            $template,
+            '',
+            '---',
+            '',
+            $content,
+        ]);
+    }
+
+    /**
+     * Assemble the final prompt from preamble + template + content (legacy path).
+     *
+     * Used by build_for_post() and build_for_thread().
+     *
+     * @param  string $content Formatted post content.
+     * @return string          Complete prompt.
      */
     private function assemble(string $content): string {
         $parts = [];
