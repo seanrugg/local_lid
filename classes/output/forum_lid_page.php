@@ -41,43 +41,45 @@ defined('MOODLE_INTERNAL') || die();
  *
  * Data structure exported to template:
  *
- *   forumid              int
- *   forumname            string
- *   courseid             int
- *   cmid                 int
- *   lid_enabled          bool
- *   disabled_notice      string
- *   discussion_model     string   — e.g. 'open_engagement'
- *   discussion_model_label string — human-readable description
- *   aggregate_html       string   — forum-scope aggregate card HTML (or '')
- *   has_aggregate        bool
- *   stale_notice         bool     — true if any student row is stale
- *   last_updated         string
- *   analysis_pending     bool     — true if any rows are pending/processing
- *   students             array
- *     userid             int
- *     fullname           string
- *     userpic            string
- *     post_count         int      — total forum posts by this learner
- *     top_bloom          int
- *     top_bloom_label    string
- *     top_score          int
- *     cpi_score          int      — 0 if not available
- *     cpi_band           string
- *     student_html       string   — student_forum card HTML (or '')
- *     has_student_lid    bool
- *     is_stale           bool     — true if student_forum row is stale
- *     is_pending         bool     — true if student_forum row is pending/processing
- *     threads            array
- *       discussionid     int
- *       subject          string
- *       thread_html      string   — thread card HTML (or '')
- *       has_thread_lid   bool
- *       status           string
- *   can_trigger          bool
- *   can_configure        bool
- *   trigger_url          string
- *   config_url           string
+ *   forumid                int
+ *   forumname              string
+ *   courseid               int
+ *   cmid                   int
+ *   lid_enabled            bool
+ *   disabled_notice        string
+ *   discussion_model       string   — e.g. 'open_engagement'
+ *   discussion_model_label string   — full human-readable description
+ *   discussion_models      array    — [{value, label, description, selected}]
+ *                                     for the forum_config.mustache radio selector
+ *   aggregate_html         string   — forum-scope aggregate card HTML (or '')
+ *   has_aggregate          bool
+ *   stale_notice           bool     — true if any student row is stale
+ *   last_updated           string
+ *   analysis_pending       bool     — true if any rows are pending/processing
+ *   students               array
+ *     userid               int
+ *     fullname             string
+ *     userpic              string
+ *     post_count           int      — total forum posts by this learner
+ *     top_bloom            int
+ *     top_bloom_label      string
+ *     top_score            int
+ *     cpi_score            int      — 0 if not available
+ *     cpi_band             string
+ *     student_html         string   — student_forum card HTML (or '')
+ *     has_student_lid      bool
+ *     is_stale             bool     — true if student_forum row is stale
+ *     is_pending           bool     — true if student_forum row is pending/processing
+ *     threads              array
+ *       discussionid       int
+ *       subject            string
+ *       thread_html        string   — thread card HTML (or '')
+ *       has_thread_lid     bool
+ *       status             string
+ *   can_trigger            bool
+ *   can_configure          bool
+ *   trigger_url            string
+ *   config_url             string
  */
 class forum_lid_page implements \renderable, \templatable {
 
@@ -130,10 +132,27 @@ class forum_lid_page implements \renderable, \templatable {
             $lidenabled = (bool) get_config('local_lid', 'lid_default_enabled');
         }
 
-        // Resolve discussion model for display.
-        $discussionmodel = $config ? ($config->discussion_model ?? \local_lid\llm\prompt_builder::MODEL_OPEN_ENGAGEMENT)
+        // Resolve discussion model.
+        $discussionmodel = $config
+            ? ($config->discussion_model ?? \local_lid\llm\prompt_builder::MODEL_OPEN_ENGAGEMENT)
             : \local_lid\llm\prompt_builder::MODEL_OPEN_ENGAGEMENT;
-        $modeldescriptions = \local_lid\llm\prompt_builder::get_model_descriptions();
+
+        // Validate — fall back to default if stored value is unrecognised.
+        $validmodels = [
+            \local_lid\llm\prompt_builder::MODEL_INDEPENDENT_FIRST,
+            \local_lid\llm\prompt_builder::MODEL_OPEN_ENGAGEMENT,
+            \local_lid\llm\prompt_builder::MODEL_STRUCTURED_DEBATE,
+        ];
+        if (!in_array($discussionmodel, $validmodels, true)) {
+            $discussionmodel = \local_lid\llm\prompt_builder::MODEL_OPEN_ENGAGEMENT;
+        }
+
+        // Build discussion_models array for forum_config.mustache radio selector.
+        // Each entry: {value, label, description, selected (bool)}.
+        $discussionmodels = $this->build_discussion_models($discussionmodel);
+
+        // Full description string for display in the dashboard header.
+        $modeldescriptions    = \local_lid\llm\prompt_builder::get_model_descriptions();
         $discussionmodellabel = $modeldescriptions[$discussionmodel]
             ?? $modeldescriptions[\local_lid\llm\prompt_builder::MODEL_OPEN_ENGAGEMENT];
 
@@ -153,6 +172,7 @@ class forum_lid_page implements \renderable, \templatable {
                 'disabled_notice'       => get_string('forum_disabled_notice', 'local_lid'),
                 'discussion_model'      => $discussionmodel,
                 'discussion_model_label' => $discussionmodellabel,
+                'discussion_models'     => $discussionmodels,
                 'aggregate_html'        => '',
                 'has_aggregate'         => false,
                 'stale_notice'          => false,
@@ -180,7 +200,6 @@ class forum_lid_page implements \renderable, \templatable {
         $lastmod = $forumanalysis ? (int) $forumanalysis->timemodified : 0;
 
         // Fetch all student_forum analysis rows for this forum.
-        // These drive the student list — not post-scope records.
         $studentrows = $DB->get_records_select(
             'local_lid_analysis',
             "scope = 'student_forum' AND forumid = :forumid AND userid IS NOT NULL",
@@ -189,7 +208,7 @@ class forum_lid_page implements \renderable, \templatable {
         );
 
         // Fetch thread-scope analysis rows indexed by discussionid.
-        $threadrows = $DB->get_records_select(
+        $threadrows  = $DB->get_records_select(
             'local_lid_analysis',
             "scope = 'thread' AND forumid = :forumid",
             ['forumid' => $forumid]
@@ -207,9 +226,9 @@ class forum_lid_page implements \renderable, \templatable {
             'id, name'
         );
 
-        $stalefound    = false;
-        $pendingfound  = false;
-        $students      = [];
+        $stalefound   = false;
+        $pendingfound = false;
+        $students     = [];
 
         foreach ($studentrows as $srow) {
             $userid = (int) $srow->userid;
@@ -221,18 +240,12 @@ class forum_lid_page implements \renderable, \templatable {
             $isstale   = ($srow->status === 'stale');
             $ispending = in_array($srow->status, ['pending', 'processing'], true);
 
-            if ($isstale) {
-                $stalefound = true;
-            }
-            if ($ispending) {
-                $pendingfound = true;
-            }
+            if ($isstale)   { $stalefound   = true; }
+            if ($ispending) { $pendingfound = true; }
 
-            // Derive highlights from student_forum JSON.
             [$topbloom, $toplabel, $topscore, $cpiscore, $cpiband] =
                 $this->derive_student_highlights($srow);
 
-            // Pre-render the student_forum analysis card.
             $studenthtml = '';
             if ($srow->status === 'complete' && !empty($srow->analysis_json)) {
                 $studenthtml = $output->render_analysis_card(
@@ -244,7 +257,6 @@ class forum_lid_page implements \renderable, \templatable {
                 }
             }
 
-            // Count total posts by this learner in this forum.
             $postcount = (int) $DB->count_records_sql(
                 "SELECT COUNT(fp.id)
                    FROM {forum_posts} fp
@@ -253,11 +265,10 @@ class forum_lid_page implements \renderable, \templatable {
                 ['forumid' => $forumid, 'userid' => $userid]
             );
 
-            // Build thread cards — one per discussion in the forum.
             $threadcards = [];
             foreach ($discussions as $disc) {
-                $discid  = (int) $disc->id;
-                $trow    = $threadbydisc[$discid] ?? null;
+                $discid = (int) $disc->id;
+                $trow   = $threadbydisc[$discid] ?? null;
 
                 $threadhtml = '';
                 if ($trow && $trow->status === 'complete' && !empty($trow->analysis_json)) {
@@ -268,11 +279,11 @@ class forum_lid_page implements \renderable, \templatable {
                 }
 
                 $threadcards[] = [
-                    'discussionid'  => $discid,
-                    'subject'       => format_string($disc->name),
-                    'thread_html'   => $threadhtml,
+                    'discussionid'   => $discid,
+                    'subject'        => format_string($disc->name),
+                    'thread_html'    => $threadhtml,
                     'has_thread_lid' => !empty($threadhtml),
-                    'status'        => $trow ? $trow->status : 'pending',
+                    'status'         => $trow ? $trow->status : 'pending',
                 ];
             }
 
@@ -304,7 +315,6 @@ class forum_lid_page implements \renderable, \templatable {
             ];
         }
 
-        // Sort by top_score descending so highest performers appear first.
         usort($students, fn($a, $b) => $b['top_score'] <=> $a['top_score']);
 
         return [
@@ -316,6 +326,7 @@ class forum_lid_page implements \renderable, \templatable {
             'disabled_notice'       => '',
             'discussion_model'      => $discussionmodel,
             'discussion_model_label' => $discussionmodellabel,
+            'discussion_models'     => $discussionmodels,
             'aggregate_html'        => $aggregatehtml,
             'has_aggregate'         => !empty($forumanalysis),
             'stale_notice'          => $stalefound,
@@ -334,13 +345,44 @@ class forum_lid_page implements \renderable, \templatable {
     // -------------------------------------------------------------------------
 
     /**
+     * Build the discussion_models array for forum_config.mustache.
+     *
+     * Returns an array of option objects for the radio button selector:
+     *   value       — model constant string (e.g. 'open_engagement')
+     *   label       — short display name from lang strings
+     *   description — full description from lang strings
+     *   selected    — bool, true for the currently active model
+     *
+     * @param  string $currentmodel  The currently saved discussion model value.
+     * @return array
+     */
+    private function build_discussion_models(string $currentmodel): array {
+        $models = [
+            \local_lid\llm\prompt_builder::MODEL_INDEPENDENT_FIRST,
+            \local_lid\llm\prompt_builder::MODEL_OPEN_ENGAGEMENT,
+            \local_lid\llm\prompt_builder::MODEL_STRUCTURED_DEBATE,
+        ];
+
+        $result = [];
+        foreach ($models as $value) {
+            $result[] = [
+                'value'       => $value,
+                'label'       => get_string('discussion_model_' . $value, 'local_lid'),
+                'description' => get_string('discussion_model_' . $value . '_desc', 'local_lid'),
+                'selected'    => ($value === $currentmodel),
+            ];
+        }
+        return $result;
+    }
+
+    /**
      * Derive display highlights from a student_forum analysis row.
      *
-     * Returns top Bloom's level, its label, top competency score, CPI score,
-     * and CPI band — all derived from the stored analysis_json. Returns safe
-     * defaults if the row is pending, stale, or has no JSON.
+     * Returns top Bloom's level, label, top competency score, CPI score,
+     * and CPI band from the stored analysis_json. Returns safe defaults
+     * if the row is pending, stale, or has no JSON.
      *
-     * @param  \stdClass $srow  A local_lid_analysis record with scope = 'student_forum'.
+     * @param  \stdClass $srow  local_lid_analysis record, scope = 'student_forum'.
      * @return array  [int $topbloom, string $toplabel, int $topscore, int $cpiscore, string $cpiband]
      */
     private function derive_student_highlights(\stdClass $srow): array {
@@ -378,7 +420,7 @@ class forum_lid_page implements \renderable, \templatable {
             }
         }
 
-        $cpi     = $data['cognitive_performance_index'] ?? [];
+        $cpi      = $data['cognitive_performance_index'] ?? [];
         $cpiscore = (int) ($cpi['cpi_score'] ?? 0);
         $cpiband  = $cpi['cpi_band'] ?? '';
 
