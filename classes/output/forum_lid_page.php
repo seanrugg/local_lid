@@ -15,7 +15,7 @@
 // along with Moodle.  If not, see <https://www.gnu.org/licenses/>.
 
 /**
- * Renderable for the Forum LID tab.
+ * Renderable for the Forum LID dashboard.
  *
  * @package    local_lid
  * @copyright  2026 Learning Intelligence Dashboard Project Contributors
@@ -29,9 +29,15 @@ defined('MOODLE_INTERNAL') || die();
 /**
  * Renderable data object for the Forum LID dashboard.
  *
- * All analysis cards (forum aggregate, per-student compact cards, individual
- * post cards) are pre-rendered to HTML strings. The template slots them in
- * with {{{ }}} so Mustache does not escape the HTML.
+ * All analysis cards are pre-rendered to HTML strings and passed to the
+ * Mustache template via {{{ }}} triple-brace syntax to prevent escaping.
+ *
+ * The student list is driven entirely by student_forum scope analysis rows,
+ * not by post-scope records. Each student card shows:
+ *   - Their student_forum analysis card (if complete)
+ *   - A stale warning if their row has status = 'stale' (late post after analysis)
+ *   - Top Bloom's level and top competency score derived from their student_forum JSON
+ *   - Thread-level analysis cards for each discussion they participated in
  *
  * Data structure exported to template:
  *
@@ -41,34 +47,33 @@ defined('MOODLE_INTERNAL') || die();
  *   cmid                 int
  *   lid_enabled          bool
  *   disabled_notice      string
+ *   discussion_model     string   — e.g. 'open_engagement'
+ *   discussion_model_label string — human-readable description
  *   aggregate_html       string   — forum-scope aggregate card HTML (or '')
  *   has_aggregate        bool
- *   stale_notice         bool
+ *   stale_notice         bool     — true if any student row is stale
  *   last_updated         string
+ *   analysis_pending     bool     — true if any rows are pending/processing
  *   students             array
  *     userid             int
  *     fullname           string
- *     userpic            string   — HTML img tag
- *     post_count         int
- *     pending_count      int
- *     error_count        int
+ *     userpic            string
+ *     post_count         int      — total forum posts by this learner
  *     top_bloom          int
  *     top_bloom_label    string
  *     top_score          int
- *     student_html       string   — compact student_forum card HTML (or '')
+ *     cpi_score          int      — 0 if not available
+ *     cpi_band           string
+ *     student_html       string   — student_forum card HTML (or '')
  *     has_student_lid    bool
- *     student_url        string
- *     posts              array
- *       postid           int
+ *     is_stale           bool     — true if student_forum row is stale
+ *     is_pending         bool     — true if student_forum row is pending/processing
+ *     threads            array
+ *       discussionid     int
  *       subject          string
- *       posted_date      string
- *       analysis_html    string   — compact post card HTML (or '')
- *       has_analysis     bool
+ *       thread_html      string   — thread card HTML (or '')
+ *       has_thread_lid   bool
  *       status           string
- *       status_label     string
- *       status_html      string   — pre-rendered status badge HTML
- *       can_trigger      bool
- *       reanalyse_url    string
  *   can_trigger          bool
  *   can_configure        bool
  *   trigger_url          string
@@ -112,11 +117,10 @@ class forum_lid_page implements \renderable, \templatable {
         $cantrigger   = has_capability('local/lid:triggeranalysis', $this->context);
         $canconfigure = has_capability('local/lid:configureforum', $this->context);
 
-        $config     = $DB->get_record('local_lid_forum_config', ['forumid' => $forumid]);
-        $forum      = $DB->get_record('forum', ['id' => $forumid], 'id, name');
+        $config = $DB->get_record('local_lid_forum_config', ['forumid' => $forumid]);
+        $forum  = $DB->get_record('forum', ['id' => $forumid], 'id, name');
 
-        // Resolve effective enabled state using full three-tier hierarchy:
-        // site force-disable → forum config row → site default.
+        // Resolve effective enabled state.
         $forcedisabled = (bool) get_config('local_lid', 'lid_force_disabled');
         if ($forcedisabled) {
             $lidenabled = false;
@@ -126,6 +130,13 @@ class forum_lid_page implements \renderable, \templatable {
             $lidenabled = (bool) get_config('local_lid', 'lid_default_enabled');
         }
 
+        // Resolve discussion model for display.
+        $discussionmodel = $config ? ($config->discussion_model ?? \local_lid\llm\prompt_builder::MODEL_OPEN_ENGAGEMENT)
+            : \local_lid\llm\prompt_builder::MODEL_OPEN_ENGAGEMENT;
+        $modeldescriptions = \local_lid\llm\prompt_builder::get_model_descriptions();
+        $discussionmodellabel = $modeldescriptions[$discussionmodel]
+            ?? $modeldescriptions[\local_lid\llm\prompt_builder::MODEL_OPEN_ENGAGEMENT];
+
         $triggerurl = (new \moodle_url('/local/lid/ajax.php'))->out(false);
         $configurl  = (new \moodle_url('/local/lid/ajax.php', [
             'action'  => 'forum_config',
@@ -134,116 +145,135 @@ class forum_lid_page implements \renderable, \templatable {
 
         if (!$lidenabled) {
             return [
-                'forumid'         => $forumid,
-                'forumname'       => $forum ? format_string($forum->name) : '',
-                'courseid'        => $courseid,
-                'cmid'            => $cmid,
-                'lid_enabled'     => false,
-                'disabled_notice' => get_string('forum_disabled_notice', 'local_lid'),
-                'aggregate_html'  => '',
-                'has_aggregate'   => false,
-                'stale_notice'    => false,
-                'last_updated'    => '',
-                'students'        => [],
-                'can_trigger'     => $cantrigger,
-                'can_configure'   => $canconfigure,
-                'trigger_url'     => $triggerurl,
-                'config_url'      => $configurl,
+                'forumid'               => $forumid,
+                'forumname'             => $forum ? format_string($forum->name) : '',
+                'courseid'              => $courseid,
+                'cmid'                  => $cmid,
+                'lid_enabled'           => false,
+                'disabled_notice'       => get_string('forum_disabled_notice', 'local_lid'),
+                'discussion_model'      => $discussionmodel,
+                'discussion_model_label' => $discussionmodellabel,
+                'aggregate_html'        => '',
+                'has_aggregate'         => false,
+                'stale_notice'          => false,
+                'last_updated'          => '',
+                'analysis_pending'      => false,
+                'students'              => [],
+                'can_trigger'           => $cantrigger,
+                'can_configure'         => $canconfigure,
+                'trigger_url'           => $triggerurl,
+                'config_url'            => $configurl,
             ];
         }
 
         // Forum-scope aggregate.
         $forumanalysis = $DB->get_record('local_lid_analysis', [
-            'scope'    => 'forum',
-            'forumid'  => $forumid,
-            'courseid' => $courseid,
-            'status'   => 'complete',
+            'scope'   => 'forum',
+            'forumid' => $forumid,
+            'status'  => 'complete',
         ]);
 
         $aggregatehtml = $forumanalysis
             ? $output->render_analysis_card($forumanalysis->analysis_json)
             : '';
 
-        $currenthash = hash('sha256',
-            (new \local_lid\llm\prompt_builder($courseid, $forumid))->get_active_template()
-        );
-
-        $stale   = false;
         $lastmod = $forumanalysis ? (int) $forumanalysis->timemodified : 0;
 
-        // All userids with post-scope records in this forum.
-        $userids = $DB->get_fieldset_sql(
-            "SELECT DISTINCT userid
-               FROM {local_lid_analysis}
-              WHERE scope = 'post' AND forumid = :forumid AND userid IS NOT NULL
-           ORDER BY userid ASC",
-            ['forumid' => $forumid]
+        // Fetch all student_forum analysis rows for this forum.
+        // These drive the student list — not post-scope records.
+        $studentrows = $DB->get_records_select(
+            'local_lid_analysis',
+            "scope = 'student_forum' AND forumid = :forumid AND userid IS NOT NULL",
+            ['forumid' => $forumid],
+            'timemodified ASC'
         );
 
-        $students = [];
+        // Fetch thread-scope analysis rows indexed by discussionid.
+        $threadrows = $DB->get_records_select(
+            'local_lid_analysis',
+            "scope = 'thread' AND forumid = :forumid",
+            ['forumid' => $forumid]
+        );
+        $threadbydisc = [];
+        foreach ($threadrows as $tr) {
+            $threadbydisc[(int) $tr->discussionid] = $tr;
+        }
 
-        foreach ($userids as $userid) {
-            $userid = (int) $userid;
+        // Fetch all discussions in this forum for thread tab building.
+        $discussions = $DB->get_records(
+            'forum_discussions',
+            ['forum' => $forumid],
+            'timemodified DESC',
+            'id, name'
+        );
+
+        $stalefound    = false;
+        $pendingfound  = false;
+        $students      = [];
+
+        foreach ($studentrows as $srow) {
+            $userid = (int) $srow->userid;
             $user   = $DB->get_record('user', ['id' => $userid]);
             if (!$user) {
                 continue;
             }
 
-            $postanalyses = $DB->get_records(
-                'local_lid_analysis',
-                ['scope' => 'post', 'forumid' => $forumid, 'userid' => $userid],
-                'timecreated ASC'
-            );
+            $isstale   = ($srow->status === 'stale');
+            $ispending = in_array($srow->status, ['pending', 'processing'], true);
 
-            $studentagg = $DB->get_record('local_lid_analysis', [
-                'scope'    => 'student_forum',
-                'forumid'  => $forumid,
-                'userid'   => $userid,
-                'courseid' => $courseid,
-                'status'   => 'complete',
-            ]);
-
-            [$topbloom, $toplabel, $topscore] = $this->derive_student_highlights(
-                $studentagg, $postanalyses
-            );
-
-            $counts = ['complete' => 0, 'pending' => 0, 'error' => 0];
-            foreach ($postanalyses as $pa) {
-                $s = ($pa->status === 'processing') ? 'pending' : $pa->status;
-                if (isset($counts[$s])) {
-                    $counts[$s]++;
-                }
+            if ($isstale) {
+                $stalefound = true;
+            }
+            if ($ispending) {
+                $pendingfound = true;
             }
 
-            if (!$stale && $currenthash) {
-                foreach ($postanalyses as $pa) {
-                    if ($pa->status === 'complete'
-                        && $pa->prompt_hash
-                        && $pa->prompt_hash !== $currenthash) {
-                        $stale = true;
-                        break;
-                    }
-                }
-            }
+            // Derive highlights from student_forum JSON.
+            [$topbloom, $toplabel, $topscore, $cpiscore, $cpiband] =
+                $this->derive_student_highlights($srow);
 
-            // Pre-render compact student_forum card.
-            $studenthtml = $studentagg
-                ? $output->render_analysis_card(
-                    $studentagg->analysis_json,
+            // Pre-render the student_forum analysis card.
+            $studenthtml = '';
+            if ($srow->status === 'complete' && !empty($srow->analysis_json)) {
+                $studenthtml = $output->render_analysis_card(
+                    $srow->analysis_json,
                     ['compact' => true, 'show_portfolio' => false, 'show_timeline' => false]
-                  )
-                : '';
-
-            // Build post rows with pre-rendered cards and status badges.
-            $postrows = [];
-            foreach ($postanalyses as $pa) {
-                $postrow = $this->build_post_row($pa, $cantrigger, $output);
-                if ($postrow !== null) {
-                    $postrows[] = $postrow;
-                    if ((int)$pa->timemodified > $lastmod) {
-                        $lastmod = (int) $pa->timemodified;
-                    }
+                );
+                if ((int) $srow->timemodified > $lastmod) {
+                    $lastmod = (int) $srow->timemodified;
                 }
+            }
+
+            // Count total posts by this learner in this forum.
+            $postcount = (int) $DB->count_records_sql(
+                "SELECT COUNT(fp.id)
+                   FROM {forum_posts} fp
+                   JOIN {forum_discussions} fd ON fd.id = fp.discussion
+                  WHERE fd.forum = :forumid AND fp.userid = :userid",
+                ['forumid' => $forumid, 'userid' => $userid]
+            );
+
+            // Build thread cards — one per discussion in the forum.
+            $threadcards = [];
+            foreach ($discussions as $disc) {
+                $discid  = (int) $disc->id;
+                $trow    = $threadbydisc[$discid] ?? null;
+
+                $threadhtml = '';
+                if ($trow && $trow->status === 'complete' && !empty($trow->analysis_json)) {
+                    $threadhtml = $output->render_analysis_card(
+                        $trow->analysis_json,
+                        ['compact' => true, 'show_portfolio' => false, 'show_timeline' => false]
+                    );
+                }
+
+                $threadcards[] = [
+                    'discussionid'  => $discid,
+                    'subject'       => format_string($disc->name),
+                    'thread_html'   => $threadhtml,
+                    'has_thread_lid' => !empty($threadhtml),
+                    'status'        => $trow ? $trow->status : 'pending',
+                ];
             }
 
             $userpic = $output->user_picture($user, [
@@ -256,41 +286,46 @@ class forum_lid_page implements \renderable, \templatable {
                 'userid'          => $userid,
                 'fullname'        => fullname($user),
                 'userpic'         => $userpic,
-                'post_count'      => $counts['complete'],
-                'pending_count'   => $counts['pending'],
-                'error_count'     => $counts['error'],
+                'post_count'      => $postcount,
                 'top_bloom'       => $topbloom,
                 'top_bloom_label' => $toplabel,
                 'top_score'       => $topscore,
+                'cpi_score'       => $cpiscore,
+                'cpi_band'        => $cpiband,
                 'student_html'    => $studenthtml,
-                'has_student_lid' => !empty($studentagg),
+                'has_student_lid' => ($srow->status === 'complete' && !empty($studenthtml)),
+                'is_stale'        => $isstale,
+                'is_pending'      => $ispending,
+                'threads'         => $threadcards,
                 'student_url'     => (new \moodle_url('/local/lid/student_view.php', [
                     'userid'   => $userid,
                     'courseid' => $courseid,
                 ]))->out(false),
-                'posts'           => $postrows,
             ];
         }
 
-        // Sort by top_score descending.
+        // Sort by top_score descending so highest performers appear first.
         usort($students, fn($a, $b) => $b['top_score'] <=> $a['top_score']);
 
         return [
-            'forumid'         => $forumid,
-            'forumname'       => $forum ? format_string($forum->name) : '',
-            'courseid'        => $courseid,
-            'cmid'            => $cmid,
-            'lid_enabled'     => true,
-            'disabled_notice' => '',
-            'aggregate_html'  => $aggregatehtml,
-            'has_aggregate'   => !empty($forumanalysis),
-            'stale_notice'    => $stale,
-            'last_updated'    => $lastmod ? userdate($lastmod) : '',
-            'students'        => $students,
-            'can_trigger'     => $cantrigger,
-            'can_configure'   => $canconfigure,
-            'trigger_url'     => $triggerurl,
-            'config_url'      => $configurl,
+            'forumid'               => $forumid,
+            'forumname'             => $forum ? format_string($forum->name) : '',
+            'courseid'              => $courseid,
+            'cmid'                  => $cmid,
+            'lid_enabled'           => true,
+            'disabled_notice'       => '',
+            'discussion_model'      => $discussionmodel,
+            'discussion_model_label' => $discussionmodellabel,
+            'aggregate_html'        => $aggregatehtml,
+            'has_aggregate'         => !empty($forumanalysis),
+            'stale_notice'          => $stalefound,
+            'last_updated'          => $lastmod ? userdate($lastmod) : '',
+            'analysis_pending'      => $pendingfound,
+            'students'              => $students,
+            'can_trigger'           => $cantrigger,
+            'can_configure'         => $canconfigure,
+            'trigger_url'           => $triggerurl,
+            'config_url'            => $configurl,
         ];
     }
 
@@ -299,97 +334,60 @@ class forum_lid_page implements \renderable, \templatable {
     // -------------------------------------------------------------------------
 
     /**
-     * Derive top Bloom's level and top competency score from a student's data.
+     * Derive display highlights from a student_forum analysis row.
      *
-     * @param  \stdClass|false $studentagg
-     * @param  \stdClass[]     $postanalyses
-     * @return array  [int $topbloom, string $toplabel, int $topscore]
+     * Returns top Bloom's level, its label, top competency score, CPI score,
+     * and CPI band — all derived from the stored analysis_json. Returns safe
+     * defaults if the row is pending, stale, or has no JSON.
+     *
+     * @param  \stdClass $srow  A local_lid_analysis record with scope = 'student_forum'.
+     * @return array  [int $topbloom, string $toplabel, int $topscore, int $cpiscore, string $cpiband]
      */
-    private function derive_student_highlights($studentagg, array $postanalyses): array {
+    private function derive_student_highlights(\stdClass $srow): array {
         $bloomlabels = [
             1 => 'Remember', 2 => 'Understand', 3 => 'Apply',
             4 => 'Analyze',  5 => 'Evaluate',   6 => 'Create',
         ];
 
-        $source = $studentagg && !empty($studentagg->analysis_json)
-            ? [json_decode($studentagg->analysis_json, true)]
-            : array_filter(array_map(
-                fn($pa) => !empty($pa->analysis_json) ? json_decode($pa->analysis_json, true) : null,
-                $postanalyses
-              ));
+        $defaults = [0, '', 0, 0, ''];
+
+        if (empty($srow->analysis_json)) {
+            return $defaults;
+        }
+
+        $data = json_decode($srow->analysis_json, true);
+        if (!is_array($data)) {
+            return $defaults;
+        }
 
         $topbloom = 0;
         $topscore = 0;
 
-        foreach ($source as $data) {
-            if (!is_array($data)) {
-                continue;
-            }
-            foreach ($data['blooms_progression'] ?? [] as $b) {
-                if ((int)($b['level'] ?? 0) > $topbloom && (int)($b['dots_active'] ?? 0) > 0) {
-                    $topbloom = (int) $b['level'];
-                }
-            }
-            foreach ($data['competencies'] ?? [] as $c) {
-                if ((int)($c['score'] ?? 0) > $topscore) {
-                    $topscore = (int) $c['score'];
-                }
+        foreach ($data['blooms_progression'] ?? [] as $b) {
+            $level = (int) ($b['level']       ?? 0);
+            $dots  = (int) ($b['dots_active'] ?? 0);
+            if ($level > $topbloom && $dots > 0) {
+                $topbloom = $level;
             }
         }
 
-        return [$topbloom, $bloomlabels[$topbloom] ?? '', $topscore];
-    }
-
-    /**
-     * Build a single post row for the student posts list.
-     *
-     * @param  \stdClass $pa
-     * @param  bool      $cantrigger
-     * @param  renderer  $output
-     * @return array|null
-     */
-    private function build_post_row(\stdClass $pa, bool $cantrigger, renderer $output): ?array {
-        global $DB;
-
-        $post = $DB->get_record('forum_posts',
-            ['id' => $pa->postid], 'id, subject, created, discussion');
-        if (!$post) {
-            return null;
+        foreach ($data['competencies'] ?? [] as $c) {
+            $score = (int) ($c['score'] ?? 0);
+            if ($score > $topscore) {
+                $topscore = $score;
+            }
         }
 
-        $subject = $post->subject ?? '';
-        if (empty($subject)) {
-            $subject = $DB->get_field('forum_discussions', 'name',
-                ['id' => $post->discussion]) ?? '';
-        }
-
-        // Pre-render compact post card (only when complete).
-        $analysishtml = ($pa->status === 'complete' && !empty($pa->analysis_json))
-            ? $output->render_analysis_card(
-                $pa->analysis_json,
-                ['compact' => true, 'show_portfolio' => false, 'show_timeline' => false]
-              )
-            : '';
-
-        // Pre-render status badge.
-        $statushtml = $output->render_status_badge($pa->status);
+        $cpi     = $data['cognitive_performance_index'] ?? [];
+        $cpiscore = (int) ($cpi['cpi_score'] ?? 0);
+        $cpiband  = $cpi['cpi_band'] ?? '';
 
         return [
-            'postid'        => (int) $pa->postid,
-            'subject'       => format_string($subject),
-            'posted_date'   => userdate($post->created),
-            'analysis_html' => $analysishtml,
-            'has_analysis'  => !empty($analysishtml),
-            'status'        => $pa->status,
-            'status_label'  => get_string('status_' . $pa->status, 'local_lid'),
-            'status_html'   => $statushtml,
-            'can_trigger'   => $cantrigger,
-            'reanalyse_url' => $cantrigger
-                ? (new \moodle_url('/local/lid/ajax.php', [
-                    'action'     => 'trigger',
-                    'analysisid' => $pa->id,
-                ]))->out(false)
-                : '',
+            $topbloom,
+            $bloomlabels[$topbloom] ?? '',
+            $topscore,
+            $cpiscore,
+            $cpiband,
         ];
     }
 }
