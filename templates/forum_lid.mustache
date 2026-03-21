@@ -1,8 +1,46 @@
 {{!
     Forum LID tab page.
     Context: see classes/output/forum_lid_page.php::export_for_template()
+
     All analysis cards and status badges arrive as pre-rendered HTML.
     Output with triple brackets to avoid escaping.
+
+    Context fields:
+        forumid              int
+        courseid             int
+        forumname            string
+        lid_enabled          bool
+        disabled_notice      string
+        can_trigger          bool
+        trigger_url          string
+        analysis_pending     bool     — true if a batch is currently queued/processing
+        stale_notice         bool     — true if any student has posted since last run
+        has_aggregate        bool
+        aggregate_html       string   — pre-rendered forum aggregate card HTML
+        last_updated         string   — human-readable datetime or ''
+        discussion_model_label string — human-readable label for the active model
+        students             array
+          userid             int
+          fullname           string
+          userpic            string   — HTML img tag
+          student_url        string
+          post_count         int      — total posts in this forum
+          pending_count      int
+          error_count        int
+          is_stale           bool     — student has new posts since last analysis
+          is_pending         bool     — student analysis in queue
+          cpi_score          int|''   — CPI integer 70–145, or '' if no analysis
+          cpi_band           string   — 'developing'|'progressing'|'performing'|'advanced'|''
+          top_bloom          int|0
+          top_bloom_label    string
+          has_student_lid    bool
+          student_html       string   — pre-rendered student_forum card HTML
+          threads            array
+            thread_id        int
+            thread_name      string
+            thread_html      string   — pre-rendered thread card HTML (or '')
+            has_analysis     bool
+            status_html      string   — pre-rendered status badge HTML
 }}
 {{> local_lid/lid_styles}}
 
@@ -14,6 +52,10 @@
             <h2 class="lid-heading">{{#str}}dashboard_forum_title, local_lid{{/str}}</h2>
             <div class="lid-mono lid-muted" style="font-size:10px;margin-top:4px">
                 {{forumname}}
+                {{#discussion_model_label}}
+                <span class="lid-sep">·</span>
+                {{#str}}dashboard_forum_discussion_model, local_lid, {{discussion_model_label}}{{/str}}
+                {{/discussion_model_label}}
                 {{#last_updated}}
                 <span class="lid-sep">·</span>
                 {{#str}}dashboard_last_updated, local_lid, {{last_updated}}{{/str}}
@@ -32,14 +74,30 @@
         </div>
     </div>
 
+    {{! ── LID timing guidance notice ─────────────────────────────────── }}
+    {{#can_trigger}}
+    <div class="lid-notice lid-notice-info"
+         style="margin-bottom:12px;font-size:10px;line-height:1.6;
+                border-left:3px solid var(--lid-accent);
+                background:var(--lid-surface2)">
+        {{#str}}dashboard_forum_lid_guidance, local_lid{{/str}}
+    </div>
+    {{/can_trigger}}
+
     {{! ── Notices ─────────────────────────────────────────────────────── }}
     {{^lid_enabled}}
     <div class="lid-notice lid-notice-warn">{{disabled_notice}}</div>
     {{/lid_enabled}}
 
+    {{#analysis_pending}}
+    <div class="lid-notice lid-notice-info">
+        {{#str}}dashboard_forum_analysis_pending, local_lid{{/str}}
+    </div>
+    {{/analysis_pending}}
+
     {{#stale_notice}}
     <div class="lid-notice lid-notice-warn">
-        {{#str}}dashboard_stale_notice, local_lid{{/str}}
+        {{#str}}dashboard_forum_stale_notice, local_lid{{/str}}
     </div>
     {{/stale_notice}}
 
@@ -55,10 +113,12 @@
         </button>
         <button class="lid-forum-tab"
                 role="tab" aria-selected="false"
-                aria-controls="lid-forum-students"
-                data-target="lid-forum-students">
-            {{#str}}dashboard_forum_students, local_lid{{/str}}
-            <span class="lid-tab-count">{{#students}}1{{/students}}</span>
+                aria-controls="lid-forum-learners"
+                data-target="lid-forum-learners">
+            {{#str}}dashboard_forum_learners, local_lid{{/str}}
+            {{#students}}
+            <span class="lid-tab-count">{{post_count}}</span>
+            {{/students}}
         </button>
     </div>
 
@@ -74,8 +134,8 @@
         {{/has_aggregate}}
     </div>
 
-    {{! ── Student contributions panel ───────────────────────────────── }}
-    <div class="lid-tab-panel lid-tab-panel-hidden" id="lid-forum-students" role="tabpanel">
+    {{! ── Learner contributions panel ───────────────────────────────── }}
+    <div class="lid-tab-panel lid-tab-panel-hidden" id="lid-forum-learners" role="tabpanel">
 
         {{^students}}
         <div class="lid-notice lid-notice-info">
@@ -89,69 +149,90 @@
             <div class="lid-student-header">
                 <div class="lid-student-avatar">{{{userpic}}}</div>
                 <div class="lid-student-info">
-                    <div class="lid-student-name">{{fullname}}</div>
+                    <div class="lid-student-name">
+                        {{fullname}}
+                        {{#is_stale}}
+                        <span class="lid-count-badge lid-count-pending"
+                              style="font-size:9px;margin-left:6px;vertical-align:middle">
+                            {{#str}}status_stale, local_lid{{/str}}
+                        </span>
+                        {{/is_stale}}
+                        {{#is_pending}}
+                        <span class="lid-count-badge"
+                              style="font-size:9px;margin-left:6px;vertical-align:middle;
+                                     background:var(--lid-surface2);color:var(--lid-muted);
+                                     border:1px solid var(--lid-border)">
+                            {{#str}}status_pending, local_lid{{/str}}
+                        </span>
+                        {{/is_pending}}
+                    </div>
                     <div class="lid-student-meta lid-mono">
                         <span class="lid-count-badge lid-count-complete">{{post_count}} posts</span>
                         {{#pending_count}}<span class="lid-count-badge lid-count-pending">{{pending_count}} pending</span>{{/pending_count}}
                         {{#error_count}}<span class="lid-count-badge lid-count-error">{{error_count}} error</span>{{/error_count}}
+                        {{#cpi_score}}<span class="lid-score-inline">CPI {{cpi_score}}<span class="lid-mono" style="font-size:9px;color:var(--lid-muted);margin-left:3px">{{cpi_band}}</span></span>{{/cpi_score}}
                         {{#top_bloom}}<span class="lid-bloom-badge">Bloom's L{{top_bloom}} — {{top_bloom_label}}</span>{{/top_bloom}}
-                        {{#top_score}}<span class="lid-score-inline">Top: {{top_score}}%</span>{{/top_score}}
                     </div>
                 </div>
                 <div class="lid-student-actions">
                     <a href="{{student_url}}" class="lid-btn lid-btn-secondary" style="font-size:10px">
-                        {{#str}}dashboard_forum_viewstudent, local_lid{{/str}}
+                        {{#str}}dashboard_forum_viewlearner, local_lid{{/str}}
                     </a>
+                    {{#threads}}
                     <button class="lid-btn lid-btn-ghost lid-js-toggle-posts"
                             aria-expanded="false"
-                            aria-controls="lid-posts-{{userid}}"
-                            data-target="lid-posts-{{userid}}">
-                        ▼ Posts ({{post_count}})
+                            aria-controls="lid-threads-{{userid}}"
+                            data-target="lid-threads-{{userid}}">
+                        ▼ {{#str}}dashboard_forum_thread_heading, local_lid{{/str}}
                     </button>
+                    {{/threads}}
                 </div>
             </div>
 
-            {{! Compact student LID preview }}
+            {{! Student forum LID card — primary analysis unit }}
             {{#has_student_lid}}
             <div class="lid-student-lid-preview">
                 {{{student_html}}}
             </div>
             {{/has_student_lid}}
+            {{^has_student_lid}}
+            {{#is_pending}}
+            <div class="lid-notice lid-notice-info" style="margin:8px 0;font-size:10px">
+                {{#str}}dashboard_forum_thread_pending, local_lid{{/str}}
+            </div>
+            {{/is_pending}}
+            {{/has_student_lid}}
 
-            {{! Individual posts accordion }}
+            {{! Thread cards accordion — collapsed by default }}
+            {{#threads}}
             <div class="lid-student-posts lid-student-posts-hidden"
-                 id="lid-posts-{{userid}}">
-                {{#posts}}
+                 id="lid-threads-{{userid}}">
+
+                {{#threads}}
                 <div class="lid-post-row">
                     <div class="lid-post-header">
                         <div class="lid-post-info">
-                            <span class="lid-post-subject">{{subject}}</span>
-                            <span class="lid-mono lid-muted" style="font-size:10px">{{posted_date}}</span>
+                            <span class="lid-post-subject">{{thread_name}}</span>
                         </div>
                         <div class="lid-post-actions">
                             {{{status_html}}}
-                            {{#can_trigger}}
-                            <button class="lid-btn lid-btn-ghost lid-js-reanalyse"
-                                    data-url="{{reanalyse_url}}"
-                                    style="font-size:10px">
-                                {{#str}}dashboard_forum_reanalyse, local_lid{{/str}}
-                            </button>
-                            {{/can_trigger}}
                         </div>
                     </div>
                     {{#has_analysis}}
                     <div class="lid-post-card-wrapper">
-                        {{{analysis_html}}}
+                        {{{thread_html}}}
                     </div>
                     {{/has_analysis}}
                 </div>
-                {{/posts}}
+                {{/threads}}
+
             </div>
+            {{/threads}}
 
         </div>{{! end .lid-student-row }}
         {{/students}}
 
-    </div>{{! end students panel }}
+    </div>{{! end learners panel }}
 
     {{/lid_enabled}}
 
