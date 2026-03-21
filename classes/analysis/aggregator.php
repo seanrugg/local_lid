@@ -17,8 +17,8 @@
 /**
  * LID aggregate analyser for local_lid.
  *
- * Computes aggregate LID JSON from individual post analyses using
- * mathematical merging — no additional LLM calls are made.
+ * Computes aggregate LID JSON from individual student_forum and thread
+ * analyses using mathematical merging — no additional LLM calls are made.
  *
  * @package    local_lid
  * @copyright  2026 Learning Intelligence Dashboard Project Contributors
@@ -31,51 +31,53 @@ defined('MOODLE_INTERNAL') || die();
 
 /**
  * Rebuilds aggregate local_lid_analysis records by mathematically merging
- * all complete post-scope analyses within a given scope boundary.
+ * all complete student_forum analyses within a given scope boundary.
  *
- * Three public methods correspond to the three aggregate scopes:
+ * Schema version: The aggregator operates on Schema v1.2 records produced
+ * by the forum discussion analyzer. Records produced by the legacy session
+ * analyzer (Schema v1.0/v1.1) use a different field structure and are not
+ * handled by this class — they are rendered directly from their stored JSON.
  *
- *   rebuild_student_forum($userid, $forumid, $courseid)
- *     Merges all complete posts by $userid in $forumid.
- *     Scope: 'student_forum'.
+ * Source scope for aggregation:
+ *   student_forum rows are the source for forum and course aggregates.
+ *   Post-scope rows no longer exist in the new pipeline — do not query for them.
  *
- *   rebuild_forum($forumid, $courseid)
- *     Merges all complete posts across all students in $forumid.
+ * Two public methods:
+ *
+ *   recompute_forum_aggregate($forumid, $courseid)
+ *     Merges all complete student_forum analyses in $forumid.
  *     Scope: 'forum'.
  *
- *   rebuild_course($courseid)
- *     Merges all complete posts across all LID-enabled forums in $courseid.
+ *   recompute_course_aggregate($courseid)
+ *     Merges all complete forum-scope aggregates across all LID-enabled forums.
  *     Scope: 'course'.
  *
- * Aggregation rules (applied consistently across all scopes):
+ * Aggregation rules (Schema v1.2):
  *
- *   scores.*                 Weighted average by session_hours (equal weight if absent).
- *   competencies[]           Merged by name (case-insensitive). Score = weighted average.
- *                            bloom_level = maximum seen. frameworks/tags = union.
- *   radar.axes[]             Matched by label. Value = weighted average.
- *   blooms_progression[]     Matched by level. dots_active = maximum seen.
- *                            description = most recent non-empty.
- *   roi.lms_equivalent_hours Sum of all posts.
- *   roi.session_hours        Sum of all posts.
- *   roi.knowledge_value_usd  Sum of all posts.
- *   roi.*  (other numerics)  Weighted average by session_hours.
- *   timeline[]               Chronological union, deduplicated by title similarity.
- *   employer_value[]         Union, deduplicated by title.
- *   portfolio.primary_tags   Union of all primary_tags.
- *   portfolio.secondary_tags Union of all secondary_tags.
- *   portfolio.title          From the most recent post's analysis.
- *   meta.confidence          Lowest confidence seen (aggregate is never more
- *                            confident than its weakest component).
- *   meta.generated_by        Set to 'local_lid aggregator v1.0'.
- *   session.source           Set to 'Moodle Forum'.
- *   session.source_type      Set to 'other'.
- *   session.duration_minutes Sum of all posts.
+ *   scores.*                       Weighted average by session_hours.
+ *   scores.critical_discourse_score Weighted average — new in v1.2.
+ *   competencies[]                 Merged by name. Score = weighted average.
+ *                                  bloom_level = maximum seen.
+ *   radar.axes[]                   Matched by label. Value = weighted average.
+ *   blooms_progression[]           Matched by level. dots_active = maximum seen.
+ *   discussion_value.session_hours Sum of all analyses.
+ *   discussion_value.word_count    Sum of all analyses.
+ *   discussion_value.character_count Sum of all analyses.
+ *   discussion_value.dci_components Weighted average per dimension.
+ *   discussion_value.discussion_contribution_index Recomputed from merged dci_components.
+ *   discussion_value.application_readiness Highest value seen.
+ *   discussion_value.participation_depth   Highest value seen.
+ *   discussion_value.retention_indicators  Union of present factors (deduplicated by name).
+ *   instructor_notes               Not aggregated — omitted from aggregate rows.
+ *                                  The instructor views individual student records for notes.
+ *   timeline[]                     Chronological union, deduplicated by title.
+ *   meta.confidence                Lowest confidence seen.
+ *   meta.generated_by              Set to 'local_lid aggregator v1.0'.
  *
- * Usage (called by session_analyser after each successful post analysis):
+ * Called by process_queue after each successful batch:
  *   $agg = new \local_lid\analysis\aggregator();
- *   $agg->rebuild_student_forum($userid, $forumid, $courseid);
- *   $agg->rebuild_forum($forumid, $courseid);
- *   $agg->rebuild_course($courseid);
+ *   $agg->recompute_forum_aggregate($forumid, $courseid);
+ *   $agg->recompute_course_aggregate($courseid);
  */
 class aggregator {
 
@@ -83,62 +85,37 @@ class aggregator {
     const GENERATOR = 'local_lid aggregator v1.0';
 
     /** @var string Schema version written into aggregated output. */
-    const SCHEMA_VERSION = '1.0';
+    const SCHEMA_VERSION = '1.2';
 
     /** @var array Confidence ranking for min-confidence aggregation. */
     const CONFIDENCE_RANK = ['LOW' => 0, 'MEDIUM' => 1, 'HIGH' => 2];
+
+    /** @var array Application readiness ranking. */
+    const READINESS_RANK = ['LOW' => 0, 'MEDIUM' => 1, 'HIGH' => 2, 'EXCEPTIONAL' => 3];
+
+    /** @var array Participation depth ranking. */
+    const DEPTH_RANK = ['LOW' => 0, 'MEDIUM' => 1, 'HIGH' => 2];
 
     // =========================================================================
     // Public — scope rebuilders
     // =========================================================================
 
     /**
-     * Rebuild the student_forum aggregate for one student in one forum.
+     * Rebuild the forum aggregate across all student_forum analyses in a forum.
      *
-     * @param int $userid
-     * @param int $forumid
-     * @param int $courseid
-     */
-    public function rebuild_student_forum(int $userid, int $forumid, int $courseid): void {
-        global $DB;
-
-        $posts = $this->load_complete_posts([
-            'scope'   => 'post',
-            'userid'  => $userid,
-            'forumid' => $forumid,
-        ]);
-
-        if (empty($posts)) {
-            return;
-        }
-
-        $aggregated = $this->merge($posts, $courseid, $forumid, $userid);
-
-        $this->upsert_aggregate([
-            'scope'    => 'student_forum',
-            'courseid' => $courseid,
-            'forumid'  => $forumid,
-            'userid'   => $userid,
-        ], $aggregated);
-    }
-
-    /**
-     * Rebuild the forum aggregate across all students in one forum.
+     * Source: scope = 'student_forum', forumid = $forumid, status = 'complete'.
      *
      * @param int $forumid
      * @param int $courseid
      */
-    public function rebuild_forum(int $forumid, int $courseid): void {
-        $posts = $this->load_complete_posts([
-            'scope'   => 'post',
-            'forumid' => $forumid,
-        ]);
+    public function recompute_forum_aggregate(int $forumid, int $courseid): void {
+        $analyses = $this->load_complete_student_forum($forumid);
 
-        if (empty($posts)) {
+        if (empty($analyses)) {
             return;
         }
 
-        $aggregated = $this->merge($posts, $courseid, $forumid, null);
+        $aggregated = $this->merge($analyses, $courseid, $forumid, null);
 
         $this->upsert_aggregate([
             'scope'    => 'forum',
@@ -149,38 +126,46 @@ class aggregator {
     }
 
     /**
-     * Rebuild the course aggregate across all LID-enabled forums.
+     * Rebuild the course aggregate across all LID-enabled forums in a course.
+     *
+     * Source: scope = 'forum' aggregate rows (already computed per-forum).
+     * This avoids re-scanning all student_forum rows and ensures the course
+     * aggregate reflects the current state of each forum aggregate.
      *
      * @param int $courseid
      */
-    public function rebuild_course(int $courseid): void {
+    public function recompute_course_aggregate(int $courseid): void {
         global $DB;
 
-        // Only include posts from forums where LID is enabled.
-        $enabledforums = $DB->get_fieldset_select(
-            'local_lid_forum_config',
-            'forumid',
-            'courseid = :courseid AND enabled = 1',
-            ['courseid' => $courseid]
-        );
-
+        $enabledforums = $this->get_enabled_forum_ids($courseid);
         if (empty($enabledforums)) {
             return;
         }
 
-        [$insql, $inparams] = $DB->get_in_or_equal($enabledforums);
-        $where = "scope = 'post' AND courseid = :courseid AND status = 'complete' AND forumid {$insql}";
+        [$insql, $inparams] = $DB->get_in_or_equal($enabledforums, SQL_PARAMS_NAMED, 'fid');
         $params = array_merge(['courseid' => $courseid], $inparams);
 
-        $records = $DB->get_records_select('local_lid_analysis', $where, $params,
-            'timecreated ASC');
+        $records = $DB->get_records_sql(
+            "SELECT *
+               FROM {local_lid_analysis}
+              WHERE scope = 'forum'
+                AND courseid = :courseid
+                AND status = 'complete'
+                AND forumid {$insql}
+           ORDER BY timemodified ASC",
+            $params
+        );
 
         if (empty($records)) {
             return;
         }
 
-        $posts = $this->decode_records($records);
-        $aggregated = $this->merge($posts, $courseid, null, null);
+        $analyses = $this->decode_records(array_values($records));
+        if (empty($analyses)) {
+            return;
+        }
+
+        $aggregated = $this->merge($analyses, $courseid, null, null);
 
         $this->upsert_aggregate([
             'scope'    => 'course',
@@ -190,32 +175,27 @@ class aggregator {
         ], $aggregated);
     }
 
-    // =========================================================================
-    // Public — on-demand merge for pre-decoded data
-    // =========================================================================
-
     /**
-     * Merge an array of already-decoded LID JSON arrays into one aggregate.
+     * Merge an array of already-decoded LID JSON arrays without persisting.
      *
-     * Used by student_lid_page to build a cross-forum student aggregate
-     * without persisting the result to the database.
+     * Used by student_lid_page to build a cross-forum student aggregate.
      *
-     * @param  array    $posts     Array of decoded LID data arrays.
+     * @param  array    $analyses  Decoded LID data arrays.
      * @param  int      $courseid
      * @param  int|null $forumid
      * @param  int|null $userid
-     * @return array|null          Merged LID data array, or null if $posts is empty.
+     * @return array|null
      */
-    public function merge_decoded_posts(
-        array $posts,
+    public function merge_decoded(
+        array $analyses,
         int $courseid,
         ?int $forumid,
         ?int $userid
     ): ?array {
-        if (empty($posts)) {
+        if (empty($analyses)) {
             return null;
         }
-        return $this->merge($posts, $courseid, $forumid, $userid);
+        return $this->merge($analyses, $courseid, $forumid, $userid);
     }
 
     // =========================================================================
@@ -223,73 +203,56 @@ class aggregator {
     // =========================================================================
 
     /**
-     * Merge an array of decoded LID JSON objects into one aggregate.
+     * Merge an array of decoded Schema v1.2 LID JSON objects into one aggregate.
      *
-     * @param  array    $posts     Array of decoded LID data arrays, ordered by timecreated ASC.
+     * @param  array    $analyses  Decoded LID data arrays.
      * @param  int      $courseid
-     * @param  int|null $forumid   Null for course-scope aggregates.
-     * @param  int|null $userid    Null for forum/course-scope aggregates.
-     * @return array               Merged LID JSON array.
+     * @param  int|null $forumid
+     * @param  int|null $userid
+     * @return array
      */
     private function merge(
-        array $posts,
+        array $analyses,
         int $courseid,
         ?int $forumid,
         ?int $userid
     ): array {
 
-        if (count($posts) === 1) {
-            // Single post — return a copy with updated meta rather than merging.
-            $single = reset($posts);
+        if (count($analyses) === 1) {
+            $single = reset($analyses);
             return $this->stamp_aggregate_meta($single, 1);
         }
 
-        // Extract session_hours weights for weighted averaging.
-        $weights = array_map(function ($p) {
-            $h = (float) ($p['roi']['session_hours'] ?? 0);
-            return $h > 0 ? $h : 1.0; // Fall back to equal weight.
-        }, $posts);
+        // Weights: use session_hours from discussion_value block.
+        $weights = array_map(function ($a) {
+            $h = (float) ($a['discussion_value']['session_hours'] ?? 0);
+            return $h > 0 ? $h : 1.0;
+        }, $analyses);
 
         $totalweight = array_sum($weights);
 
         $out = [];
-        $out['schema_version'] = self::SCHEMA_VERSION;
+        $out['schema_version']   = self::SCHEMA_VERSION;
+        $out['session']          = $this->merge_session($analyses);
+        $out['scores']           = $this->merge_scores($analyses, $weights, $totalweight);
+        $out['competencies']     = $this->merge_competencies($analyses, $weights, $totalweight);
+        $out['radar']            = $this->merge_radar($analyses, $weights, $totalweight);
+        $out['blooms_progression'] = $this->merge_blooms($analyses);
+        $out['discussion_value'] = $this->merge_discussion_value($analyses, $weights, $totalweight);
+        $out['timeline']         = $this->merge_timeline($analyses);
 
-        // Session block.
-        $out['session'] = $this->merge_session($posts, $weights);
+        // instructor_notes is intentionally omitted from aggregates —
+        // instructors view individual student records for per-learner notes.
 
-        // Scores block — weighted average.
-        $out['scores'] = $this->merge_scores($posts, $weights, $totalweight);
-
-        // Competencies — merge by name.
-        $out['competencies'] = $this->merge_competencies($posts, $weights, $totalweight);
-
-        // Radar — merge by label.
-        $out['radar'] = $this->merge_radar($posts, $weights, $totalweight);
-
-        // Bloom's progression — merge by level.
-        $out['blooms_progression'] = $this->merge_blooms($posts);
-
-        // ROI block.
-        $out['roi'] = $this->merge_roi($posts, $weights, $totalweight);
-
-        // Timeline — union ordered by post date.
-        $out['timeline'] = $this->merge_timeline($posts);
-
-        // Employer value — union deduplicated by title.
-        $out['employer_value'] = $this->merge_employer_value($posts);
-
-        // Portfolio — union of tags, title from most recent.
-        $out['portfolio'] = $this->merge_portfolio($posts);
-
-        // CPI — merge component scores, recompute CPI from merged values.
-        $cpis = array_filter(array_map(fn($p) => $p['cognitive_performance_index'] ?? null, $posts));
+        // CPI: merge if present in source analyses.
+        $cpis = array_values(array_filter(
+            array_map(fn($a) => $a['cognitive_performance_index'] ?? null, $analyses)
+        ));
         if (!empty($cpis)) {
-            $out['cognitive_performance_index'] = $this->merge_cpi(array_values($cpis), $weights, $totalweight);
+            $out['cognitive_performance_index'] = $this->merge_cpi($cpis);
         }
 
-        // Meta.
-        $out['meta'] = $this->merge_meta($posts, count($posts));
+        $out['meta'] = $this->merge_meta($analyses, count($analyses));
 
         return $out;
     }
@@ -301,38 +264,42 @@ class aggregator {
     /**
      * Build the merged session block.
      *
-     * @param  array $posts
-     * @param  float[] $weights
+     * duration_minutes, word_count, character_count are summed.
+     * Tags are unioned. Title and topic_summary from the most recent analysis.
+     *
+     * @param  array $analyses
      * @return array
      */
-    private function merge_session(array $posts, array $weights): array {
-        // Use the most recent post's session block as the base.
-        $latest = end($posts);
-        reset($posts);
+    private function merge_session(array $analyses): array {
+        $latest = end($analyses);
+        reset($analyses);
 
-        // Collect all unique tags.
-        $tags = [];
-        foreach ($posts as $p) {
-            if (!empty($p['session']['tags']) && is_array($p['session']['tags'])) {
-                $tags = array_merge($tags, $p['session']['tags']);
+        $tags             = [];
+        $totalduration    = 0;
+        $totalwords       = 0;
+        $totalchars       = 0;
+
+        foreach ($analyses as $a) {
+            $session = $a['session'] ?? [];
+            $totalduration += (int) ($session['duration_minutes'] ?? 0);
+            $totalwords    += (int) ($session['word_count']       ?? 0);
+            $totalchars    += (int) ($session['character_count']  ?? 0);
+            if (!empty($session['tags']) && is_array($session['tags'])) {
+                $tags = array_values(array_unique(array_merge($tags, $session['tags'])));
             }
         }
-        $tags = array_values(array_unique($tags));
 
-        // Sum durations.
-        $totalduration = 0;
-        foreach ($posts as $p) {
-            $totalduration += (int) ($p['session']['duration_minutes'] ?? 0);
-        }
-
+        $ls = $latest['session'] ?? [];
         return [
-            'id'               => $latest['session']['id'] ?? '',
-            'date'             => $latest['session']['date'] ?? date('Y-m-d'),
-            'title'            => $latest['session']['title'] ?? '',
+            'id'               => $ls['id']            ?? '',
+            'date'             => $ls['date']           ?? date('Y-m-d'),
+            'title'            => $ls['title']          ?? '',
             'source'           => 'Moodle Forum',
             'source_type'      => 'other',
             'duration_minutes' => $totalduration,
-            'topic_summary'    => $latest['session']['topic_summary'] ?? '',
+            'word_count'       => $totalwords,
+            'character_count'  => $totalchars,
+            'topic_summary'    => $ls['topic_summary']  ?? '',
             'tags'             => $tags,
         ];
     }
@@ -340,84 +307,89 @@ class aggregator {
     /**
      * Weighted average of all scores.* fields.
      *
-     * @param  array   $posts
+     * Schema v1.2 scores: cognitive_depth_score, critical_discourse_score,
+     * strategic_thinking_pct, engagement_score, meta_cognition_score,
+     * competency_domains_count (max, not average).
+     *
+     * @param  array   $analyses
      * @param  float[] $weights
      * @param  float   $totalweight
      * @return array
      */
-    private function merge_scores(array $posts, array $weights, float $totalweight): array {
-        $fields = [
-            'competency_domains_count',
+    private function merge_scores(array $analyses, array $weights, float $totalweight): array {
+        $numericfields = [
             'cognitive_depth_score',
+            'critical_discourse_score',
             'strategic_thinking_pct',
-            'roi_awareness_pct',
             'engagement_score',
             'meta_cognition_score',
         ];
 
         $result = [];
-        foreach ($fields as $field) {
-            $result[$field] = $this->weighted_average($posts, $weights, $totalweight,
-                fn($p) => (float) ($p['scores'][$field] ?? 0));
+        foreach ($numericfields as $field) {
+            $result[$field] = (int) round($this->weighted_avg(
+                $analyses, $weights, $totalweight,
+                fn($a) => (float) ($a['scores'][$field] ?? 0)
+            ));
         }
 
-        // competency_domains_count: use max rather than average (more meaningful).
+        // competency_domains_count — max is more meaningful than average.
         $result['competency_domains_count'] = (int) max(array_map(
-            fn($p) => (int) ($p['scores']['competency_domains_count'] ?? 0),
-            $posts
+            fn($a) => (int) ($a['scores']['competency_domains_count'] ?? 0),
+            $analyses
         ));
 
         return $result;
     }
 
     /**
-     * Merge competency arrays by name (case-insensitive key).
+     * Merge competency arrays by name (case-insensitive).
      *
-     * For each unique competency name:
-     *   - score: weighted average across posts that include it
-     *   - bloom_level: maximum seen
-     *   - bloom_label: label corresponding to the max bloom_level
-     *   - color: from the first occurrence
-     *   - frameworks: union
-     *   - tags: union
+     * score       = weighted average across analyses containing this competency.
+     * bloom_level = maximum seen.
+     * color       = from first occurrence.
+     * frameworks  = union.
+     * tags        = union.
      *
-     * @param  array   $posts
-     * @param  float[] $weights  Indexed same as $posts.
+     * @param  array   $analyses
+     * @param  float[] $weights
      * @param  float   $totalweight
      * @return array
      */
-    private function merge_competencies(array $posts, array $weights, float $totalweight): array {
-        // Build a keyed map: normalised_name => [ occurrences with their weights ].
-        $map = [];
-        $postlist = array_values($posts);
-        $weightlist = array_values($weights);
+    private function merge_competencies(
+        array $analyses,
+        array $weights,
+        float $totalweight
+    ): array {
+        $map       = [];
+        $alist     = array_values($analyses);
+        $wlist     = array_values($weights);
 
-        foreach ($postlist as $i => $post) {
-            if (empty($post['competencies']) || !is_array($post['competencies'])) {
+        foreach ($alist as $i => $analysis) {
+            if (empty($analysis['competencies']) || !is_array($analysis['competencies'])) {
                 continue;
             }
-            foreach ($post['competencies'] as $comp) {
+            foreach ($analysis['competencies'] as $comp) {
                 if (empty($comp['name'])) {
                     continue;
                 }
                 $key = strtolower(trim($comp['name']));
+                $level = (int) ($comp['bloom_level'] ?? 1);
+
                 if (!isset($map[$key])) {
                     $map[$key] = [
                         'name'       => $comp['name'],
                         'scores'     => [],
                         'weights'    => [],
-                        'bloom_max'  => (int) ($comp['bloom_level'] ?? 1),
-                        'color'      => $comp['color'] ?? 'cyan',
+                        'bloom_max'  => $level,
+                        'color'      => $comp['color']      ?? 'cyan',
                         'frameworks' => $comp['frameworks'] ?? [],
-                        'tags'       => $comp['tags'] ?? [],
+                        'tags'       => $comp['tags']       ?? [],
                     ];
                 } else {
-                    // Update max bloom.
-                    $level = (int) ($comp['bloom_level'] ?? 1);
                     if ($level > $map[$key]['bloom_max']) {
                         $map[$key]['bloom_max'] = $level;
                     }
-                    // Union frameworks and tags.
                     $map[$key]['frameworks'] = array_values(array_unique(
                         array_merge($map[$key]['frameworks'], $comp['frameworks'] ?? [])
                     ));
@@ -425,8 +397,9 @@ class aggregator {
                         array_merge($map[$key]['tags'], $comp['tags'] ?? [])
                     ));
                 }
+
                 $map[$key]['scores'][]  = (float) ($comp['score'] ?? 0);
-                $map[$key]['weights'][] = $weightlist[$i];
+                $map[$key]['weights'][] = $wlist[$i];
             }
         }
 
@@ -437,9 +410,13 @@ class aggregator {
 
         $result = [];
         foreach ($map as $comp) {
-            $localweight = array_sum($comp['weights']);
-            $score = $localweight > 0
-                ? array_sum(array_map(fn($s, $w) => $s * $w, $comp['scores'], $comp['weights'])) / $localweight
+            $lw    = array_sum($comp['weights']);
+            $score = $lw > 0
+                ? array_sum(array_map(
+                    fn($s, $w) => $s * $w,
+                    $comp['scores'],
+                    $comp['weights']
+                  )) / $lw
                 : 0;
 
             $result[] = [
@@ -453,30 +430,32 @@ class aggregator {
             ];
         }
 
-        // Sort by score descending for consistent display ordering.
         usort($result, fn($a, $b) => $b['score'] <=> $a['score']);
-
         return $result;
     }
 
     /**
-     * Merge radar axes by label — weighted average of values.
+     * Merge radar axes by label — weighted average values.
      *
-     * @param  array   $posts
+     * @param  array   $analyses
      * @param  float[] $weights
      * @param  float   $totalweight
      * @return array
      */
-    private function merge_radar(array $posts, array $weights, float $totalweight): array {
+    private function merge_radar(
+        array $analyses,
+        array $weights,
+        float $totalweight
+    ): array {
         $axismap = [];
-        $postlist  = array_values($posts);
-        $weightlist = array_values($weights);
+        $alist   = array_values($analyses);
+        $wlist   = array_values($weights);
 
-        foreach ($postlist as $i => $post) {
-            if (empty($post['radar']['axes']) || !is_array($post['radar']['axes'])) {
+        foreach ($alist as $i => $analysis) {
+            if (empty($analysis['radar']['axes']) || !is_array($analysis['radar']['axes'])) {
                 continue;
             }
-            foreach ($post['radar']['axes'] as $axis) {
+            foreach ($analysis['radar']['axes'] as $axis) {
                 $label = trim($axis['label'] ?? '');
                 if ($label === '') {
                     continue;
@@ -490,8 +469,7 @@ class aggregator {
                     ];
                 }
                 $axismap[$label]['values'][]  = (float) ($axis['value'] ?? 0);
-                $axismap[$label]['weights'][] = $weightlist[$i];
-                // Keep the most recently seen description.
+                $axismap[$label]['weights'][] = $wlist[$i];
                 if (!empty($axis['description'])) {
                     $axismap[$label]['description'] = $axis['description'];
                 }
@@ -500,9 +478,13 @@ class aggregator {
 
         $axes = [];
         foreach ($axismap as $axis) {
-            $localweight = array_sum($axis['weights']);
-            $value = $localweight > 0
-                ? array_sum(array_map(fn($v, $w) => $v * $w, $axis['values'], $axis['weights'])) / $localweight
+            $lw    = array_sum($axis['weights']);
+            $value = $lw > 0
+                ? array_sum(array_map(
+                    fn($v, $w) => $v * $w,
+                    $axis['values'],
+                    $axis['weights']
+                  )) / $lw
                 : 0;
 
             $axes[] = [
@@ -518,22 +500,21 @@ class aggregator {
     /**
      * Merge blooms_progression by level.
      *
-     * dots_active = maximum across all posts for that level.
-     * description = from the post with the highest dots_active for that level.
-     * dot_color   = from the post with the highest dots_active.
-     * icon        = from the first post that has it.
+     * dots_active = maximum across all analyses for that level.
+     * description = from the analysis with the highest dots_active.
      *
-     * @param  array $posts
+     * @param  array $analyses
      * @return array
      */
-    private function merge_blooms(array $posts): array {
+    private function merge_blooms(array $analyses): array {
         $levelmap = [];
 
-        foreach ($posts as $post) {
-            if (empty($post['blooms_progression']) || !is_array($post['blooms_progression'])) {
+        foreach ($analyses as $analysis) {
+            if (empty($analysis['blooms_progression']) ||
+                !is_array($analysis['blooms_progression'])) {
                 continue;
             }
-            foreach ($post['blooms_progression'] as $entry) {
+            foreach ($analysis['blooms_progression'] as $entry) {
                 $level = (int) ($entry['level'] ?? 0);
                 if ($level < 1 || $level > 6) {
                     continue;
@@ -554,11 +535,16 @@ class aggregator {
                 } else {
                     if ($dots > $levelmap[$level]['dots_active']) {
                         $levelmap[$level]['dots_active'] = $dots;
-                        $levelmap[$level]['description'] = $entry['description'] ?? $levelmap[$level]['description'];
-                        $levelmap[$level]['dot_color']   = $entry['dot_color']   ?? $levelmap[$level]['dot_color'];
-                        $levelmap[$level]['title']       = $entry['title']       ?? $levelmap[$level]['title'];
+                        if (!empty($entry['description'])) {
+                            $levelmap[$level]['description'] = $entry['description'];
+                        }
+                        if (!empty($entry['dot_color'])) {
+                            $levelmap[$level]['dot_color'] = $entry['dot_color'];
+                        }
+                        if (!empty($entry['title'])) {
+                            $levelmap[$level]['title'] = $entry['title'];
+                        }
                     }
-                    // Always fill in icon if we don't have one yet.
                     if (empty($levelmap[$level]['icon']) && !empty($entry['icon'])) {
                         $levelmap[$level]['icon'] = $entry['icon'];
                     }
@@ -571,79 +557,149 @@ class aggregator {
     }
 
     /**
-     * Merge ROI fields.
+     * Merge discussion_value blocks (Schema v1.2).
      *
-     * Summed fields: lms_equivalent_hours, session_hours, knowledge_value_usd.
-     * Weighted average: all other numeric fields.
-     * application_readiness: highest value seen (EXCEPTIONAL > HIGH > MEDIUM > LOW).
+     * session_hours, word_count, character_count — summed.
+     * dci_components.*                           — weighted average.
+     * discussion_contribution_index              — recomputed from merged dci_components.
+     * application_readiness                      — highest value seen.
+     * participation_depth                        — highest value seen.
+     * retention_indicators                       — union of factors_present, deduped by factor name.
      *
-     * @param  array   $posts
+     * @param  array   $analyses
      * @param  float[] $weights
      * @param  float   $totalweight
      * @return array
      */
-    private function merge_roi(array $posts, array $weights, float $totalweight): array {
-        $readinessrank = ['LOW' => 0, 'MEDIUM' => 1, 'HIGH' => 2, 'EXCEPTIONAL' => 3];
-        $readinessvals = ['LOW', 'MEDIUM', 'HIGH', 'EXCEPTIONAL'];
-
-        $maxreadinessrank = -1;
-
-        $sumlms      = 0.0;
+    private function merge_discussion_value(
+        array $analyses,
+        array $weights,
+        float $totalweight
+    ): array {
         $sumsession  = 0.0;
-        $sumknowledge = 0.0;
+        $sumwords    = 0;
+        $sumchars    = 0;
+        $maxreadiness = -1;
+        $maxdepth    = -1;
+        $readinessvals = array_flip(self::READINESS_RANK);
+        $depthvals     = array_flip(self::DEPTH_RANK);
 
-        foreach ($posts as $p) {
-            $roi = $p['roi'] ?? [];
-            $sumlms       += (float) ($roi['lms_equivalent_hours'] ?? 0);
-            $sumsession   += (float) ($roi['session_hours'] ?? 0);
-            $sumknowledge += (float) ($roi['knowledge_value_usd'] ?? 0);
+        // DCI component accumulation.
+        $dcifields    = [
+            'idea_originality', 'reasoning_transparency',
+            'peer_advancement', 'critical_challenge', 'knowledge_integration',
+        ];
+        $dciaccum     = array_fill_keys($dcifields, 0.0);
+        $dciweighttot = 0.0;
 
-            $readiness = strtoupper(trim($roi['application_readiness'] ?? 'LOW'));
-            $rank = $readinessrank[$readiness] ?? 0;
-            if ($rank > $maxreadinessrank) {
-                $maxreadinessrank = $rank;
+        // Retention indicators union.
+        $factorsseen  = [];
+        $factorspresent = [];
+
+        foreach ($analyses as $dv) {
+            $dv = $dv['discussion_value'] ?? [];
+
+            $sumsession += (float) ($dv['session_hours']    ?? 0);
+            $sumwords   += (int)   ($dv['word_count']       ??
+                // Fall back to session word_count for analyses that stored it there.
+                ($analyses[array_search($dv, array_column($analyses, 'discussion_value'))]
+                    ['session']['word_count'] ?? 0)
+            );
+            $sumchars   += (int)   ($dv['character_count']  ?? 0);
+
+            $readiness = strtoupper(trim($dv['application_readiness'] ?? 'LOW'));
+            $rank      = self::READINESS_RANK[$readiness] ?? 0;
+            if ($rank > $maxreadiness) {
+                $maxreadiness = $rank;
+            }
+
+            $depth     = strtoupper(trim($dv['participation_depth'] ?? 'LOW'));
+            $drank     = self::DEPTH_RANK[$depth] ?? 0;
+            if ($drank > $maxdepth) {
+                $maxdepth = $drank;
+            }
+
+            // DCI components.
+            $dcicomp = $dv['dci_components'] ?? [];
+            foreach ($dcifields as $field) {
+                $val = (float) ($dcicomp[$field] ?? 0);
+                $dciaccum[$field] += $val;
+            }
+            $dciweighttot += 1.0; // Equal weight per analysis for DCI.
+
+            // Retention indicators — union of present factors.
+            $ri = $dv['retention_indicators'] ?? [];
+            foreach ($ri['factors_present'] ?? [] as $fp) {
+                $fname = trim($fp['factor'] ?? '');
+                if ($fname !== '' && !isset($factorsseen[$fname])) {
+                    $factorsseen[$fname] = true;
+                    $factorspresent[] = [
+                        'factor'   => $fname,
+                        'evidence' => $fp['evidence'] ?? '',
+                    ];
+                }
             }
         }
 
-        $wavg = fn($field) => $this->weighted_average(
-            $posts, $weights, $totalweight,
-            fn($p) => (float) ($p['roi'][$field] ?? 0)
-        );
+        // Compute merged DCI components.
+        $mergeddci = [];
+        foreach ($dcifields as $field) {
+            $mergeddci[$field] = $dciweighttot > 0
+                ? round($dciaccum[$field] / $dciweighttot, 1)
+                : 0.0;
+        }
+
+        // Recompute DCI total from merged components (sum of 5 dims, max 10.0).
+        $dcivalue = round(array_sum($mergeddci), 1);
+
+        // All factors not in present list are absent.
+        $allfactors = [
+            'Active Generation', 'Contextual Grounding', 'Iterative Refinement',
+            'Peer Dialogue', 'Prior Knowledge Activation', 'Application Intent',
+            'Meta-Cognitive Awareness',
+        ];
+        $factorsabsent = array_values(array_filter(
+            $allfactors,
+            fn($f) => !isset($factorsseen[$f])
+        ));
 
         return [
-            'knowledge_value_usd'        => (int) round($sumknowledge),
-            'time_efficiency_multiplier' => round($wavg('time_efficiency_multiplier'), 1),
-            'engagement_score'           => (int) round($wavg('engagement_score')),
-            'retention_probability_pct'  => (int) round($wavg('retention_probability_pct')),
-            'application_readiness'      => $readinessvals[max(0, $maxreadinessrank)],
-            'employer_value_index'       => round($wavg('employer_value_index'), 1),
-            'lms_equivalent_hours'       => round($sumlms, 1),
-            'session_hours'              => round($sumsession, 1),
+            'application_readiness'          => $readinessvals[max(0, $maxreadiness)] ?? 'LOW',
+            'participation_depth'            => $depthvals[max(0, $maxdepth)]         ?? 'LOW',
+            'session_hours'                  => round($sumsession, 1),
+            'word_count'                     => $sumwords,
+            'character_count'                => $sumchars,
+            'discussion_contribution_index'  => $dcivalue,
+            'dci_components'                 => $mergeddci,
+            'retention_indicators'           => [
+                'label'           => 'Discussion Engagement Indicators',
+                'factors_present' => $factorspresent,
+                'factors_absent'  => $factorsabsent,
+            ],
         ];
     }
 
     /**
-     * Union timeline entries across all posts, ordered chronologically.
-     * Deduplicates by exact title match.
+     * Union timeline entries across all analyses, deduplicated by title.
      *
-     * @param  array $posts
+     * @param  array $analyses
      * @return array
      */
-    private function merge_timeline(array $posts): array {
+    private function merge_timeline(array $analyses): array {
         $seen   = [];
         $result = [];
 
-        foreach ($posts as $post) {
-            if (empty($post['timeline']) || !is_array($post['timeline'])) {
+        foreach ($analyses as $analysis) {
+            if (empty($analysis['timeline']) || !is_array($analysis['timeline'])) {
                 continue;
             }
-            foreach ($post['timeline'] as $entry) {
+            foreach ($analysis['timeline'] as $entry) {
                 $title = trim($entry['title'] ?? '');
                 if ($title === '' || isset($seen[$title])) {
                     continue;
                 }
                 $seen[$title] = true;
-                $result[] = [
+                $result[]     = [
                     'title'       => $title,
                     'description' => $entry['description'] ?? '',
                 ];
@@ -654,156 +710,61 @@ class aggregator {
     }
 
     /**
-     * Union employer_value entries, deduplicated by title.
+     * Merge CPI blocks from multiple analyses.
      *
-     * @param  array $posts
+     * Component scores are averaged (equal weight per analysis).
+     * CPI is recomputed from merged components using the v1.2 formula.
+     * Weights: cognitive_depth 0.35, critical_discourse 0.25,
+     *          strategic_thinking 0.20, engagement 0.15, meta_cognition 0.05.
+     *
+     * @param  array $cpis  Array of cognitive_performance_index blocks.
      * @return array
      */
-    private function merge_employer_value(array $posts): array {
-        $seen   = [];
-        $result = [];
-
-        foreach ($posts as $post) {
-            if (empty($post['employer_value']) || !is_array($post['employer_value'])) {
-                continue;
-            }
-            foreach ($post['employer_value'] as $entry) {
-                $title = trim($entry['title'] ?? '');
-                if ($title === '' || isset($seen[$title])) {
-                    continue;
-                }
-                $seen[$title] = true;
-                $result[] = [
-                    'icon'        => $entry['icon']        ?? '',
-                    'title'       => $title,
-                    'description' => $entry['description'] ?? '',
-                ];
-            }
-        }
-
-        return $result;
-    }
-
-    /**
-     * Merge portfolio blocks — union of tags, title from most recent post.
-     *
-     * @param  array $posts
-     * @return array
-     */
-    private function merge_portfolio(array $posts): array {
-        $latest      = end($posts);
-        reset($posts);
-
-        $primarytags   = [];
-        $secondarytags = [];
-        $docformats    = [];
-        $seenformats   = [];
-
-        foreach ($posts as $post) {
-            $portfolio = $post['portfolio'] ?? [];
-            if (!empty($portfolio['primary_tags']) && is_array($portfolio['primary_tags'])) {
-                $primarytags = array_values(array_unique(
-                    array_merge($primarytags, $portfolio['primary_tags'])
-                ));
-            }
-            if (!empty($portfolio['secondary_tags']) && is_array($portfolio['secondary_tags'])) {
-                $secondarytags = array_values(array_unique(
-                    array_merge($secondarytags, $portfolio['secondary_tags'])
-                ));
-            }
-            if (!empty($portfolio['documentation_formats']) && is_array($portfolio['documentation_formats'])) {
-                foreach ($portfolio['documentation_formats'] as $fmt) {
-                    $label = $fmt['label'] ?? '';
-                    if ($label !== '' && !isset($seenformats[$label])) {
-                        $seenformats[$label] = true;
-                        $docformats[] = $fmt;
-                    }
-                }
-            }
-        }
-
-        $latestportfolio = $latest['portfolio'] ?? [];
-
-        return [
-            'title'                 => $latestportfolio['title']            ?? '',
-            'subtitle'              => $latestportfolio['subtitle']          ?? '',
-            'primary_tags'          => $primarytags,
-            'secondary_title'       => $latestportfolio['secondary_title']   ?? '',
-            'secondary_subtitle'    => $latestportfolio['secondary_subtitle'] ?? '',
-            'secondary_tags'        => $secondarytags,
-            'documentation_formats' => $docformats,
-        ];
-    }
-
-    /**
-     * Merge cognitive_performance_index blocks from multiple posts.
-     *
-     * Strategy:
-     *   component_scores.*  — weighted average (same weights as other score fields).
-     *   cpi_score           — recomputed from merged component scores using the
-     *                         v1.1 formula: round(70 + (raw/100) × 75), clamped 70–145.
-     *   cpi_band            — derived from the recomputed cpi_score.
-     *   cpi_band_description — indicates this is an aggregated result.
-     *   calculation_note    — standard disclaimer, updated to note aggregation.
-     *
-     * @param  array   $cpis        Array of cognitive_performance_index arrays.
-     * @param  float[] $weights     Weights aligned to the parent $posts array —
-     *                              only the subset matching $cpis positions is used.
-     * @param  float   $totalweight
-     * @return array
-     */
-    private function merge_cpi(array $cpis, array $weights, float $totalweight): array {
-        // Component field names and their weights in the CPI formula.
+    private function merge_cpi(array $cpis): array {
         $componentweights = [
-            'cognitive_depth'   => 0.35,
-            'meta_cognition'    => 0.25,
+            'cognitive_depth'    => 0.35,
+            'critical_discourse' => 0.25,
             'strategic_thinking' => 0.20,
-            'engagement'        => 0.15,
-            'roi_awareness'     => 0.05,
+            'engagement'         => 0.15,
+            'meta_cognition'     => 0.05,
         ];
 
-        // Weighted average of each component score across posts that have CPI.
-        $localweight = 0.0;
-        foreach ($cpis as $cpi) {
-            $localweight += 1.0; // Equal weight per post with CPI data.
-        }
-
+        $n = count($cpis);
         $mergedcomponents = [];
+
         foreach (array_keys($componentweights) as $field) {
             $sum = 0.0;
-            $n   = 0;
+            $c   = 0;
             foreach ($cpis as $cpi) {
                 $val = $cpi['component_scores'][$field] ?? null;
                 if ($val !== null && is_numeric($val)) {
                     $sum += (float) $val;
-                    $n++;
+                    $c++;
                 }
             }
-            $mergedcomponents[$field] = $n > 0 ? (int) round($sum / $n) : 0;
+            $mergedcomponents[$field] = $c > 0 ? (int) round($sum / $c) : 0;
         }
 
-        // Recompute CPI from merged components.
+        // Recompute CPI.
         $raw = 0.0;
         foreach ($componentweights as $field => $w) {
             $raw += ($mergedcomponents[$field] ?? 0) * $w;
         }
         $cpiscore = max(70, min(145, (int) round(70 + ($raw / 100) * 75)));
-
-        // Derive band from score.
-        $band = $this->cpi_band_from_score($cpiscore);
+        $band     = $this->cpi_band($cpiscore);
 
         return [
-            'cpi_score'           => $cpiscore,
-            'cpi_band'            => $band,
-            'cpi_band_description' => "Aggregated CPI computed from " . count($cpis) .
-                " post analysis(es). Component scores are weighted averages; " .
-                "the CPI was recomputed using the v1.1 formula from merged components.",
-            'component_weights'   => $componentweights,
-            'component_scores'    => $mergedcomponents,
-            'calculation_note'    => "Session-specific behavioral composite scored via " .
-                "LI Dashboard Prompt v1.2 rubrics. Not a measure of general intelligence " .
-                "or a psychometric IQ equivalent. Reflects observed cognitive performance " .
-                "within this session only. This entry represents an aggregated result.",
+            'cpi_score'            => $cpiscore,
+            'cpi_band'             => $band,
+            'cpi_band_description' => "Aggregated CPI from {$n} analysis(es). " .
+                "Component scores are averages; CPI recomputed via LI Forum Discussion " .
+                "Analyzer v1.0 formula from merged components.",
+            'component_weights'    => $componentweights,
+            'component_scores'     => $mergedcomponents,
+            'calculation_note'     => "Discussion-specific behavioral composite scored via " .
+                "LI Forum Discussion Analyzer v1.0 rubrics. Not a measure of general " .
+                "intelligence or a psychometric IQ equivalent. This entry represents an " .
+                "aggregated result across multiple learner analyses.",
         ];
     }
 
@@ -813,36 +774,28 @@ class aggregator {
      * @param  int    $score
      * @return string
      */
-    private function cpi_band_from_score(int $score): string {
-        if ($score >= 130) {
-            return 'Exceptional';
-        }
-        if ($score >= 115) {
-            return 'Advanced';
-        }
-        if ($score >= 100) {
-            return 'Proficient';
-        }
-        if ($score >= 85) {
-            return 'Developing';
-        }
+    private function cpi_band(int $score): string {
+        if ($score >= 130) { return 'Exceptional'; }
+        if ($score >= 115) { return 'Advanced'; }
+        if ($score >= 100) { return 'Proficient'; }
+        if ($score >= 85)  { return 'Developing'; }
         return 'Foundational';
     }
 
     /**
      * Build the aggregate meta block.
      *
-     * confidence = lowest (most conservative) confidence across all posts.
+     * confidence = lowest confidence seen across all source analyses.
      *
-     * @param  array $posts
-     * @param  int   $postcount
+     * @param  array $analyses
+     * @param  int   $count
      * @return array
      */
-    private function merge_meta(array $posts, int $postcount): array {
-        $minrank = 2; // Start at HIGH and only go down.
+    private function merge_meta(array $analyses, int $count): array {
+        $minrank = 2;
 
-        foreach ($posts as $post) {
-            $conf = strtoupper(trim($post['meta']['confidence'] ?? 'HIGH'));
+        foreach ($analyses as $a) {
+            $conf = strtoupper(trim($a['meta']['confidence'] ?? 'HIGH'));
             $rank = self::CONFIDENCE_RANK[$conf] ?? 2;
             if ($rank < $minrank) {
                 $minrank = $rank;
@@ -850,32 +803,32 @@ class aggregator {
         }
 
         $confidencemap = array_flip(self::CONFIDENCE_RANK);
-        $confidence    = $confidencemap[$minrank] ?? 'LOW';
 
         return [
             'generated_by' => self::GENERATOR,
             'generated_at' => date('c'),
-            'confidence'   => $confidence,
-            'notes'        => "Aggregated from {$postcount} post analysis(es).",
+            'confidence'   => $confidencemap[$minrank] ?? 'LOW',
+            'notes'        => "Aggregated from {$count} student_forum analysis(es).",
         ];
     }
 
     /**
-     * Stamp aggregate meta fields onto a single-post result being returned
-     * as an aggregate (no merging needed, just update provenance fields).
+     * Stamp aggregate meta onto a single-analysis result.
      *
      * @param  array $data
-     * @param  int   $postcount
+     * @param  int   $count
      * @return array
      */
-    private function stamp_aggregate_meta(array $data, int $postcount): array {
-        $data['meta']['generated_by'] = self::GENERATOR;
-        $data['meta']['generated_at'] = date('c');
-        $data['meta']['notes']        = "Aggregated from {$postcount} post analysis(es). " .
+    private function stamp_aggregate_meta(array $data, int $count): array {
+        $data['schema_version']             = self::SCHEMA_VERSION;
+        $data['meta']['generated_by']       = self::GENERATOR;
+        $data['meta']['generated_at']       = date('c');
+        $data['meta']['notes']              = "Aggregated from {$count} analysis(es). " .
             ($data['meta']['notes'] ?? '');
-        $data['session']['source']      = 'Moodle Forum';
-        $data['session']['source_type'] = 'other';
-        // CPI carries through unchanged from the single post — no recomputation needed.
+        $data['session']['source']          = 'Moodle Forum';
+        $data['session']['source_type']     = 'other';
+        // instructor_notes is intentionally stripped from aggregate rows.
+        unset($data['instructor_notes']);
         return $data;
     }
 
@@ -884,92 +837,124 @@ class aggregator {
     // =========================================================================
 
     /**
-     * Load and decode all complete post-scope analysis records matching $where.
+     * Load and decode all complete student_forum analyses for a forum.
      *
-     * @param  array $conditions  Field => value conditions for get_records().
-     * @return array              Array of decoded LID data arrays, ordered by timecreated ASC.
+     * @param  int   $forumid
+     * @return array Decoded LID data arrays, ordered by timemodified ASC.
      */
-    private function load_complete_posts(array $conditions): array {
+    private function load_complete_student_forum(int $forumid): array {
         global $DB;
 
-        $conditions['status'] = 'complete';
-        $records = $DB->get_records('local_lid_analysis', $conditions, 'timecreated ASC');
+        $records = $DB->get_records('local_lid_analysis', [
+            'scope'   => 'student_forum',
+            'forumid' => $forumid,
+            'status'  => 'complete',
+        ], 'timemodified ASC');
 
-        return $this->decode_records($records);
+        return $this->decode_records(array_values($records));
     }
 
     /**
      * Decode an array of local_lid_analysis records into LID data arrays.
-     * Skips records with null or unparseable analysis_json.
      *
      * @param  \stdClass[] $records
      * @return array
      */
     private function decode_records(array $records): array {
-        $posts = [];
+        $out = [];
         foreach ($records as $record) {
             if (empty($record->analysis_json)) {
                 continue;
             }
             $data = json_decode($record->analysis_json, true);
             if (is_array($data)) {
-                $posts[] = $data;
+                $out[] = $data;
             }
         }
-        return $posts;
+        return $out;
+    }
+
+    /**
+     * Return array of forum ids with LID enabled in the given course.
+     *
+     * @param  int   $courseid
+     * @return int[]
+     */
+    private function get_enabled_forum_ids(int $courseid): array {
+        global $DB;
+
+        $sitedefault = (bool) get_config('local_lid', 'lid_default_enabled');
+        $configrows  = $DB->get_records(
+            'local_lid_forum_config',
+            ['courseid' => $courseid],
+            '',
+            'forumid, enabled'
+        );
+
+        $explicitenabled  = [];
+        $explicitdisabled = [];
+        foreach ($configrows as $row) {
+            if ((bool) $row->enabled) {
+                $explicitenabled[] = (int) $row->forumid;
+            } else {
+                $explicitdisabled[] = (int) $row->forumid;
+            }
+        }
+
+        if ($sitedefault) {
+            $allids = array_map(
+                fn($r) => (int) $r->id,
+                $DB->get_records('forum', ['course' => $courseid], '', 'id')
+            );
+            return array_values(array_diff($allids, $explicitdisabled));
+        }
+
+        return $explicitenabled;
     }
 
     /**
      * Insert or update an aggregate local_lid_analysis record.
      *
-     * Matches on scope + courseid + forumid + userid (nulls included in match).
-     * Updates the existing row if found; inserts a new row if not.
+     * Matches on scope + courseid + forumid (NULL-safe) + userid (NULL-safe).
      *
-     * @param  array $scope      Associative array: scope, courseid, forumid, userid.
+     * @param  array $scope      Keys: scope, courseid, forumid, userid.
      * @param  array $aggregated The merged LID data array to store.
      */
     private function upsert_aggregate(array $scope, array $aggregated): void {
         global $DB;
 
-        // Build the WHERE clause respecting NULL values.
-        $conditions = ['scope' => $scope['scope'], 'courseid' => $scope['courseid']];
+        // Build a NULL-safe WHERE clause.
+        $whereclauses = [
+            'scope = :scope',
+            'courseid = :courseid',
+        ];
+        $params = [
+            'scope'    => $scope['scope'],
+            'courseid' => $scope['courseid'],
+        ];
 
         if ($scope['forumid'] === null) {
-            $nullclause = 'forumid IS NULL';
+            $whereclauses[] = 'forumid IS NULL';
         } else {
-            $conditions['forumid'] = $scope['forumid'];
-            $nullclause = null;
+            $whereclauses[] = 'forumid = :forumid';
+            $params['forumid'] = $scope['forumid'];
         }
 
         if ($scope['userid'] === null) {
-            $nullclause2 = 'userid IS NULL';
+            $whereclauses[] = 'userid IS NULL';
         } else {
-            $conditions['userid'] = $scope['userid'];
-            $nullclause2 = null;
+            $whereclauses[] = 'userid = :userid';
+            $params['userid'] = $scope['userid'];
         }
 
-        // Moodle's get_records() doesn't support IS NULL — use get_records_sql.
-        $whereclauses = [];
-        $params       = [];
-        foreach ($conditions as $col => $val) {
-            $whereclauses[] = "{$col} = :{$col}";
-            $params[$col]   = $val;
-        }
-        if ($nullclause) {
-            $whereclauses[] = $nullclause;
-        }
-        if ($nullclause2) {
-            $whereclauses[] = $nullclause2;
-        }
-
-        $where   = implode(' AND ', $whereclauses);
-        $existingrecords = $DB->get_records_sql(
+        $where    = implode(' AND ', $whereclauses);
+        $existing = $DB->get_record_sql(
             "SELECT id FROM {local_lid_analysis} WHERE {$where}",
             $params
         );
-        $existing = !empty($existingrecords) ? reset($existingrecords) : null;
 
         $json = json_encode($aggregated, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        $now  = time();
 
         if ($existing) {
             $DB->update_record('local_lid_analysis', (object) [
@@ -979,25 +964,25 @@ class aggregator {
                 'status'         => 'complete',
                 'error_message'  => null,
                 'llm_model'      => self::GENERATOR,
-                'timemodified'   => time(),
+                'timemodified'   => $now,
             ]);
         } else {
-            $record = new \stdClass();
-            $record->scope          = $scope['scope'];
-            $record->courseid       = $scope['courseid'];
-            $record->forumid        = $scope['forumid'] ?? null;
-            $record->discussionid   = null;
-            $record->postid         = null;
-            $record->userid         = $scope['userid'] ?? null;
-            $record->analysis_json  = $json;
-            $record->schema_version = self::SCHEMA_VERSION;
-            $record->status         = 'complete';
-            $record->error_message  = null;
-            $record->llm_model      = self::GENERATOR;
-            $record->prompt_hash    = null;
-            $record->timecreated    = time();
-            $record->timemodified   = time();
-            $DB->insert_record('local_lid_analysis', $record);
+            $DB->insert_record('local_lid_analysis', (object) [
+                'scope'          => $scope['scope'],
+                'courseid'       => $scope['courseid'],
+                'forumid'        => $scope['forumid'] ?? null,
+                'discussionid'   => null,
+                'postid'         => null,
+                'userid'         => $scope['userid'] ?? null,
+                'analysis_json'  => $json,
+                'schema_version' => self::SCHEMA_VERSION,
+                'status'         => 'complete',
+                'error_message'  => null,
+                'llm_model'      => self::GENERATOR,
+                'prompt_hash'    => null,
+                'timecreated'    => $now,
+                'timemodified'   => $now,
+            ]);
         }
     }
 
@@ -1006,16 +991,16 @@ class aggregator {
     // =========================================================================
 
     /**
-     * Compute a weighted average of a numeric field extracted from each post.
+     * Compute a weighted average of a numeric field extracted from each analysis.
      *
-     * @param  array    $posts
-     * @param  float[]  $weights       One weight per post, same order.
-     * @param  float    $totalweight   Sum of $weights.
-     * @param  callable $extractor     fn($post) => float — extracts the value.
-     * @return float                   Weighted average, or 0 if totalweight is 0.
+     * @param  array    $analyses
+     * @param  float[]  $weights
+     * @param  float    $totalweight
+     * @param  callable $extractor   fn($analysis) => float
+     * @return float
      */
-    private function weighted_average(
-        array $posts,
+    private function weighted_avg(
+        array $analyses,
         array $weights,
         float $totalweight,
         callable $extractor
@@ -1024,12 +1009,12 @@ class aggregator {
             return 0.0;
         }
 
-        $postlist   = array_values($posts);
-        $weightlist = array_values($weights);
-        $sum        = 0.0;
+        $alist  = array_values($analyses);
+        $wlist  = array_values($weights);
+        $sum    = 0.0;
 
-        foreach ($postlist as $i => $post) {
-            $sum += $extractor($post) * $weightlist[$i];
+        foreach ($alist as $i => $a) {
+            $sum += $extractor($a) * $wlist[$i];
         }
 
         return $sum / $totalweight;
