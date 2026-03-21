@@ -61,7 +61,6 @@ if ($action && confirm_sesskey()) {
     if (!$forcedisabled && in_array($action, ['enable_all', 'disable_all'])) {
         $enabled = ($action === 'enable_all') ? 1 : 0;
 
-        // Get all forum course modules in this course.
         $forums = $DB->get_records_sql(
             "SELECT f.id AS forumid
                FROM {forum} f
@@ -70,9 +69,8 @@ if ($action && confirm_sesskey()) {
         );
 
         foreach ($forums as $forum) {
-            $forumid = (int) $forum->forumid;
-            $existing = $DB->get_record('local_lid_forum_config',
-                ['forumid' => $forumid]);
+            $forumid  = (int) $forum->forumid;
+            $existing = $DB->get_record('local_lid_forum_config', ['forumid' => $forumid]);
 
             if ($existing) {
                 $DB->update_record('local_lid_forum_config', (object) [
@@ -101,10 +99,12 @@ if ($action && confirm_sesskey()) {
 // Build forum status table for display.
 $forcedisabled = (bool) get_config('local_lid', 'lid_force_disabled');
 
+// Include discussion_model from forum config so the table can display it.
 $forums = $DB->get_records_sql(
     "SELECT f.id, f.name,
             cm.id AS cmid,
-            COALESCE(lfc.enabled, :sitedefault) AS lid_enabled
+            COALESCE(lfc.enabled, :sitedefault) AS lid_enabled,
+            COALESCE(lfc.discussion_model, 'open_engagement') AS discussion_model
        FROM {forum} f
        JOIN {course_modules} cm ON cm.instance = f.id
        JOIN {modules} m ON m.id = cm.module AND m.name = 'forum'
@@ -117,6 +117,13 @@ $forums = $DB->get_records_sql(
     ]
 );
 
+// Human-readable labels for the three discussion model values.
+$modellabels = [
+    'independent_first'  => get_string('discussion_model_independent_first',  'local_lid'),
+    'open_engagement'    => get_string('discussion_model_open_engagement',     'local_lid'),
+    'structured_debate'  => get_string('discussion_model_structured_debate',   'local_lid'),
+];
+
 $enabledcount = 0;
 $forumrows    = [];
 foreach ($forums as $forum) {
@@ -125,13 +132,14 @@ foreach ($forums as $forum) {
         $enabledcount++;
     }
     $forumrows[] = [
-        'forumid'    => (int) $forum->id,
-        'forumname'  => format_string($forum->name),
-        'cmid'       => (int) $forum->cmid,
-        'enabled'    => $effective,
-        'edit_url'   => (new moodle_url('/course/modedit.php', [
-            'update'  => $forum->cmid,
-            'return'  => 1,
+        'forumid'          => (int) $forum->id,
+        'forumname'        => format_string($forum->name),
+        'cmid'             => (int) $forum->cmid,
+        'enabled'          => $effective,
+        'discussion_model' => $forum->discussion_model,
+        'edit_url'         => (new moodle_url('/course/modedit.php', [
+            'update' => $forum->cmid,
+            'return' => 1,
         ]))->out(false),
     ];
 }
@@ -161,21 +169,16 @@ if (!$forcedisabled && has_capability('local/lid:configureforum', $context)) {
     echo html_writer::start_div('lid-course-bulk-actions',
         ['style' => 'display:flex;gap:10px;margin-bottom:24px']);
 
-    // Enable all button.
-    $enableurl = new moodle_url($url, ['action' => 'enable_all', 'sesskey' => sesskey()]);
-    echo html_writer::link(
-        $enableurl,
-        get_string('course_settings_enable_all', 'local_lid'),
-        ['class' => 'btn btn-primary']
-    );
-
-    // Disable all button.
+    $enableurl  = new moodle_url($url, ['action' => 'enable_all',  'sesskey' => sesskey()]);
     $disableurl = new moodle_url($url, ['action' => 'disable_all', 'sesskey' => sesskey()]);
-    echo html_writer::link(
-        $disableurl,
+
+    echo html_writer::link($enableurl,
+        get_string('course_settings_enable_all',  'local_lid'),
+        ['class' => 'btn btn-primary']);
+
+    echo html_writer::link($disableurl,
         get_string('course_settings_disable_all', 'local_lid'),
-        ['class' => 'btn btn-secondary']
-    );
+        ['class' => 'btn btn-secondary']);
 
     echo html_writer::end_div();
 }
@@ -188,18 +191,32 @@ if (empty($forumrows)) {
     );
 } else {
     $table = new html_table();
-    $table->head = ['Forum', 'LID Status', 'Edit Settings'];
+    $table->head = [
+        get_string('forum', 'forum'),
+        get_string('forum_config_enabled',          'local_lid'),
+        get_string('forum_config_discussion_model', 'local_lid'),
+        get_string('edit'),
+    ];
     $table->attributes['class'] = 'generaltable';
     $table->data = [];
 
     foreach ($forumrows as $row) {
         $statusbadge = $row['enabled']
-            ? html_writer::span('Enabled',
+            ? html_writer::span(
+                get_string('status_complete', 'local_lid'),
                 'badge badge-success',
                 ['style' => 'background:#00ff9d;color:#000;font-size:11px'])
-            : html_writer::span('Disabled',
+            : html_writer::span(
+                get_string('status_disabled', 'local_lid'),
                 'badge badge-secondary',
                 ['style' => 'background:#2a3d58;color:#5a7090;font-size:11px']);
+
+        $modellabel = $row['enabled']
+            ? html_writer::span(
+                $modellabels[$row['discussion_model']] ?? $row['discussion_model'],
+                'lid-mono',
+                ['style' => 'font-size:11px;color:#5a7090'])
+            : html_writer::span('—', '', ['style' => 'color:#2a3d58']);
 
         $editlink = html_writer::link(
             $row['edit_url'],
@@ -210,6 +227,7 @@ if (empty($forumrows)) {
         $table->data[] = [
             format_string($row['forumname']),
             $statusbadge,
+            $modellabel,
             $editlink,
         ];
     }
