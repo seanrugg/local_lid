@@ -39,9 +39,11 @@ defined('MOODLE_INTERNAL') || die();
  *   forum_lid_page    → local_lid/forum_lid
  *   student_lid_page  → local_lid/student_lid
  *
- * The renderer also exposes helper methods used directly by templates
- * via {{#renderhelper}} calls — specifically the dashboard panel renderer
- * which converts a LID JSON string into the HTML panel markup.
+ * Schema version handling:
+ *   v1.0 / v1.1 — session analyzer output. ROI block, employer_value, portfolio.
+ *   v1.2        — forum discussion analyzer output. discussion_value block (DCI,
+ *                 participation_depth, retention_indicators), instructor_notes.
+ *                 ROI, employer_value, and portfolio are absent.
  */
 class renderer extends \plugin_renderer_base {
 
@@ -89,15 +91,17 @@ class renderer extends \plugin_renderer_base {
     /**
      * Render a single LID analysis card from a JSON string.
      *
-     * Used by forum_lid and student_lid templates to render individual
-     * post analysis cards inline. Returns an empty string if the JSON
-     * is null or unparseable — the template handles the null state itself.
+     * Supports Schema v1.0, v1.1 (session analyzer), and v1.2 (forum
+     * discussion analyzer). Schema version is detected from the JSON and
+     * the appropriate template fields are populated accordingly.
      *
-     * @param  string|null $analysisjson  LID Schema v1.0 JSON string.
+     * Returns an empty string if the JSON is null or unparseable.
+     *
+     * @param  string|null $analysisjson  LID Schema JSON string.
      * @param  array       $options       Optional rendering options:
-     *                                    'compact' => bool (smaller card variant)
-     *                                    'show_portfolio' => bool (default true)
-     *                                    'show_timeline' => bool (default true)
+     *                                    'compact'          => bool (smaller card variant)
+     *                                    'show_portfolio'   => bool (default true)
+     *                                    'show_timeline'    => bool (default true)
      * @return string HTML
      */
     public function render_analysis_card(?string $analysisjson, array $options = []): string {
@@ -129,12 +133,12 @@ class renderer extends \plugin_renderer_base {
         ];
 
         return $this->render_from_template('local_lid/status_badge', [
-            'status'       => $status,
-            'status_label' => $labels[$status] ?? $status,
-            'is_pending'   => $status === 'pending',
+            'status'        => $status,
+            'status_label'  => $labels[$status] ?? $status,
+            'is_pending'    => $status === 'pending',
             'is_processing' => $status === 'processing',
-            'is_complete'  => $status === 'complete',
-            'is_error'     => $status === 'error',
+            'is_complete'   => $status === 'complete',
+            'is_error'      => $status === 'error',
         ]);
     }
 
@@ -145,74 +149,141 @@ class renderer extends \plugin_renderer_base {
     /**
      * Prepare a LID JSON data array for the analysis_card template.
      *
-     * Flattens and augments the decoded LID JSON into a template-friendly
-     * structure. All numeric values are cast to ensure Mustache renders
-     * them correctly (Mustache treats 0 as falsy in some engines).
+     * Branches on schema_version:
+     *   v1.0 / v1.1 — populates ROI, employer_value, portfolio blocks.
+     *                  Sets has_roi = true, has_discussion_value = false.
+     *   v1.2        — populates discussion_value (DCI), instructor_notes.
+     *                  Sets has_roi = false, has_discussion_value = true.
+     *                  employer_value and portfolio are suppressed.
      *
      * @param  array $data     Decoded LID JSON array.
      * @param  array $options  Rendering options.
      * @return array           Template data.
      */
     private function prepare_card_data(array $data, array $options): array {
-        $compact        = (bool) ($options['compact']         ?? false);
-        $showportfolio  = (bool) ($options['show_portfolio']  ?? true);
-        $showtimeline   = (bool) ($options['show_timeline']   ?? true);
+        $compact       = (bool) ($options['compact']        ?? false);
+        $showportfolio = (bool) ($options['show_portfolio'] ?? true);
+        $showtimeline  = (bool) ($options['show_timeline']  ?? true);
+
+        $schemaversion = $data['schema_version'] ?? '1.0';
+        $isv12         = ($schemaversion === '1.2');
 
         $session = $data['session'] ?? [];
         $scores  = $data['scores']  ?? [];
-        $roi     = $data['roi']     ?? [];
         $meta    = $data['meta']    ?? [];
 
-        // Prepare competency bars — sorted by score descending, capped at 8
-        // for the compact view to keep the card readable.
+        // Competencies — sorted by score descending, capped at 5 for compact.
         $competencies = $data['competencies'] ?? [];
         usort($competencies, fn($a, $b) => ($b['score'] ?? 0) <=> ($a['score'] ?? 0));
         if ($compact) {
             $competencies = array_slice($competencies, 0, 5);
         }
 
-        // Prepare radar axes — already sorted by aggregator.
+        // Radar axes.
         $radaraxes = $data['radar']['axes'] ?? [];
 
-        // Prepare Bloom's progression — ensure all 6 levels are present,
-        // filling gaps with inactive entries so the grid always renders fully.
-        $bloomsmap = [];
-        foreach ($data['blooms_progression'] ?? [] as $entry) {
-            $level = (int) ($entry['level'] ?? 0);
-            if ($level >= 1 && $level <= 6) {
-                $bloomsmap[$level] = $entry;
-            }
-        }
-        $bloomdefaults = [
-            1 => ['label' => 'Remember',   'icon' => '📖'],
-            2 => ['label' => 'Understand',  'icon' => '💡'],
-            3 => ['label' => 'Apply',       'icon' => '🔧'],
-            4 => ['label' => 'Analyze',     'icon' => '🔍'],
-            5 => ['label' => 'Evaluate',    'icon' => '⚖️'],
-            6 => ['label' => 'Create',      'icon' => '🏗️'],
-        ];
-        $bloomsprogression = [];
-        for ($l = 1; $l <= 6; $l++) {
-            $entry = $bloomsmap[$l] ?? [];
-            $bloomsprogression[] = [
-                'level'       => $l,
-                'label'       => $entry['label']       ?? $bloomdefaults[$l]['label'],
-                'icon'        => $entry['icon']        ?? $bloomdefaults[$l]['icon'],
-                'title'       => $entry['title']       ?? '',
-                'description' => $entry['description'] ?? '',
-                'dots_active' => (int) ($entry['dots_active'] ?? 0),
-                'dot_color'   => $entry['dot_color']   ?? 'cyan',
-                'is_active'   => isset($bloomsmap[$l]),
-                // Dot booleans for Mustache (no logic in templates).
-                'dot1' => (int) ($entry['dots_active'] ?? 0) >= 1,
-                'dot2' => (int) ($entry['dots_active'] ?? 0) >= 2,
-                'dot3' => (int) ($entry['dots_active'] ?? 0) >= 3,
-                'dot4' => (int) ($entry['dots_active'] ?? 0) >= 4,
-                'dot5' => (int) ($entry['dots_active'] ?? 0) >= 5,
+        // Bloom's progression — ensure all 6 levels present.
+        $bloomsprogression = $this->prepare_blooms($data['blooms_progression'] ?? []);
+
+        // ── Schema-branched blocks ────────────────────────────────────────────
+
+        if ($isv12) {
+            $roiblock           = $this->empty_roi_block();
+            $discussionvalue    = $this->prepare_discussion_value($data['discussion_value'] ?? []);
+            $employervalue      = [];
+            $hasemployervalue   = false;
+            $instructornotes    = $data['instructor_notes'] ?? '';
+            $hasinstructornotes = !empty($instructornotes);
+            $hasportfolio       = false;
+            $portfoliodata      = $this->empty_portfolio_block();
+        } else {
+            $roi                = $data['roi'] ?? [];
+            $roiblock           = $this->prepare_roi_block($roi);
+            $discussionvalue    = $this->empty_discussion_value_block();
+            $employervalue      = $data['employer_value'] ?? [];
+            $hasemployervalue   = !empty($employervalue);
+            $instructornotes    = '';
+            $hasinstructornotes = false;
+            $hasportfolio       = !empty($data['portfolio']['title']);
+            $portfoliodata      = [
+                'portfolio_title'   => format_string($data['portfolio']['title']    ?? ''),
+                'portfolio_subtitle' => $data['portfolio']['subtitle']              ?? '',
+                'portfolio_tags'    => $this->prepare_tags($data['portfolio']['primary_tags'] ?? []),
+                'portfolio_formats' => $data['portfolio']['documentation_formats']  ?? [],
             ];
         }
 
-        // ROI display values.
+        return [
+            // Card metadata.
+            'compact'           => $compact,
+            'show_portfolio'    => $showportfolio && !$compact && !$isv12,
+            'show_timeline'     => $showtimeline  && !$compact,
+            'schema_version'    => $schemaversion,
+            'is_v12'            => $isv12,
+
+            // Session block.
+            'session_title'       => format_string($session['title']         ?? ''),
+            'session_date'        => $session['date']                        ?? '',
+            'session_source'      => format_string($session['source']        ?? ''),
+            'session_source_type' => $session['source_type']                 ?? '',
+            'session_duration'    => (int) ($session['duration_minutes']     ?? 0),
+            'session_summary'     => format_string($session['topic_summary'] ?? ''),
+            'session_tags'        => $this->prepare_tags($session['tags']    ?? []),
+
+            // Scores block.
+            'cognitive_depth'     => (int) ($scores['cognitive_depth_score']   ?? 0),
+            'strategic_thinking'  => (int) ($scores['strategic_thinking_pct']  ?? 0),
+            'roi_awareness'       => (int) ($scores['roi_awareness_pct']        ?? 0),
+            'engagement_score'    => (int) ($scores['engagement_score']         ?? 0),
+            'meta_cognition'      => (int) ($scores['meta_cognition_score']     ?? 0),
+            'domains_count'       => (int) ($scores['competency_domains_count'] ?? 0),
+
+            // Competencies.
+            'competencies'        => $this->prepare_competencies($competencies),
+
+            // Radar.
+            'radar_axes_json'     => json_encode($radaraxes),
+            'has_radar'           => !empty($radaraxes),
+
+            // Bloom's.
+            'blooms_progression'  => $bloomsprogression,
+
+            // Schema-branched blocks.
+            'has_roi'                => !$isv12,
+            'has_discussion_value'   => $isv12,
+            'employer_value'         => $employervalue,
+            'has_employer_value'     => $hasemployervalue,
+            'instructor_notes'       => $instructornotes,
+            'has_instructor_notes'   => $hasinstructornotes,
+            'has_portfolio'          => $hasportfolio,
+
+            // Timeline.
+            'timeline'            => $data['timeline'] ?? [],
+            'has_timeline'        => !empty($data['timeline']),
+
+            // Meta.
+            'meta_generated_by'   => $meta['generated_by'] ?? '',
+            'meta_generated_at'   => $meta['generated_at'] ?? '',
+            'meta_confidence'     => $meta['confidence']   ?? '',
+            'meta_notes'          => $meta['notes']        ?? '',
+            'has_meta_notes'      => !empty($meta['notes']),
+            'confidence_high'     => ($meta['confidence'] ?? '') === 'HIGH',
+            'confidence_medium'   => ($meta['confidence'] ?? '') === 'MEDIUM',
+            'confidence_low'      => ($meta['confidence'] ?? '') === 'LOW',
+
+        ] + $portfoliodata
+          + $roiblock
+          + $discussionvalue
+          + $this->prepare_cpi_data($data['cognitive_performance_index'] ?? null, $isv12);
+    }
+
+    /**
+     * Prepare ROI block fields for v1.0 / v1.1 cards.
+     *
+     * @param  array $roi
+     * @return array
+     */
+    private function prepare_roi_block(array $roi): array {
         $readinesscolors = [
             'LOW'         => 'secondary',
             'MEDIUM'      => 'warning',
@@ -223,96 +294,157 @@ class renderer extends \plugin_renderer_base {
         $readinesscolor = $readinesscolors[$readiness] ?? 'secondary';
 
         return [
-            // Card metadata.
-            'compact'          => $compact,
-            'show_portfolio'   => $showportfolio && !$compact,
-            'show_timeline'    => $showtimeline  && !$compact,
-            'schema_version'   => $data['schema_version'] ?? '1.0',
-
-            // Session block.
-            'session_title'        => format_string($session['title']         ?? ''),
-            'session_date'         => $session['date']                        ?? '',
-            'session_source'       => format_string($session['source']        ?? ''),
-            'session_source_type'  => $session['source_type']                 ?? '',
-            'session_duration'     => (int) ($session['duration_minutes']     ?? 0),
-            'session_summary'      => format_string($session['topic_summary'] ?? ''),
-            'session_tags'         => $this->prepare_tags($session['tags']    ?? []),
-
-            // Scores block.
-            'cognitive_depth'      => (int) ($scores['cognitive_depth_score']   ?? 0),
-            'strategic_thinking'   => (int) ($scores['strategic_thinking_pct']  ?? 0),
-            'roi_awareness'        => (int) ($scores['roi_awareness_pct']        ?? 0),
-            'engagement_score'     => (int) ($scores['engagement_score']         ?? 0),
-            'meta_cognition'       => (int) ($scores['meta_cognition_score']     ?? 0),
-            'domains_count'        => (int) ($scores['competency_domains_count'] ?? 0),
-
-            // Competencies.
-            'competencies'         => $this->prepare_competencies($competencies),
-
-            // Radar.
-            'radar_axes_json'      => json_encode($radaraxes),
-            'has_radar'            => !empty($radaraxes),
-
-            // Bloom's.
-            'blooms_progression'   => $bloomsprogression,
-
-            // ROI.
-            'knowledge_value'      => number_format((int) ($roi['knowledge_value_usd']        ?? 0)),
-            'efficiency_mult'      => number_format((float) ($roi['time_efficiency_multiplier'] ?? 0), 1),
-            'retention_pct'        => (int) ($roi['retention_probability_pct']                ?? 0),
+            'knowledge_value'       => number_format((int)   ($roi['knowledge_value_usd']          ?? 0)),
+            'efficiency_mult'       => number_format((float) ($roi['time_efficiency_multiplier']    ?? 0), 1),
+            'retention_pct'         => (int) ($roi['retention_probability_pct']                    ?? 0),
             'application_readiness' => $readiness,
-            'readiness_color'      => $readinesscolor,
-            'employer_value_index' => number_format((float) ($roi['employer_value_index']     ?? 0), 1),
-            'lms_hours'            => number_format((float) ($roi['lms_equivalent_hours']     ?? 0), 1),
-            'session_hours'        => number_format((float) ($roi['session_hours']            ?? 0), 1),
+            'readiness_color'       => $readinesscolor,
+            'employer_value_index'  => number_format((float) ($roi['employer_value_index']          ?? 0), 1),
+            'lms_hours'             => number_format((float) ($roi['lms_equivalent_hours']          ?? 0), 1),
+            'session_hours'         => number_format((float) ($roi['session_hours']                 ?? 0), 1),
+        ];
+    }
 
-            // Employer value.
-            'employer_value'       => $data['employer_value'] ?? [],
-            'has_employer_value'   => !empty($data['employer_value']),
+    /**
+     * Return safe empty ROI defaults for v1.2 cards.
+     *
+     * @return array
+     */
+    private function empty_roi_block(): array {
+        return [
+            'knowledge_value'       => '0',
+            'efficiency_mult'       => '0.0',
+            'retention_pct'         => 0,
+            'application_readiness' => 'LOW',
+            'readiness_color'       => 'secondary',
+            'employer_value_index'  => '0.0',
+            'lms_hours'             => '0.0',
+            'session_hours'         => '0.0',
+        ];
+    }
 
-            // Timeline.
-            'timeline'             => $data['timeline'] ?? [],
-            'has_timeline'         => !empty($data['timeline']),
+    /**
+     * Prepare discussion_value block fields for v1.2 cards.
+     *
+     * Schema v1.2 discussion_value structure:
+     *   dci                  float  — Discussion Contribution Index (0–100)
+     *   dci_band             string — 'Minimal'|'Emerging'|'Contributing'|'Leading'
+     *   dci_description      string
+     *   participation_depth  object
+     *     volume             string — 'LOW'|'MEDIUM'|'HIGH'
+     *     session_hours      float
+     *     thread_breadth     string — 'LOW'|'MEDIUM'|'HIGH'
+     *     depth_rating       string — 'LOW'|'MEDIUM'|'HIGH'
+     *   retention_indicators array  — strings
+     *
+     * @param  array $dv  Decoded discussion_value block.
+     * @return array
+     */
+    private function prepare_discussion_value(array $dv): array {
+        $dci     = (float) ($dv['dci']         ?? 0);
+        $band    = $dv['dci_band']              ?? '';
+        $desc    = $dv['dci_description']       ?? '';
+        $depth   = $dv['participation_depth']   ?? [];
+        $indicators = $dv['retention_indicators'] ?? [];
 
-            // Portfolio.
-            'portfolio_title'      => format_string($data['portfolio']['title']    ?? ''),
-            'portfolio_subtitle'   => $data['portfolio']['subtitle']               ?? '',
-            'portfolio_tags'       => $this->prepare_tags($data['portfolio']['primary_tags'] ?? []),
-            'portfolio_formats'    => $data['portfolio']['documentation_formats']  ?? [],
-            'has_portfolio'        => !empty($data['portfolio']['title']),
+        $bandcolors = [
+            'Minimal'      => 'muted',
+            'Emerging'     => 'orange',
+            'Contributing' => 'cyan',
+            'Leading'      => 'green',
+        ];
+        $dcicolor = $bandcolors[$band] ?? 'muted';
 
-            // Meta.
-            'meta_generated_by'    => $meta['generated_by'] ?? '',
-            'meta_generated_at'    => $meta['generated_at'] ?? '',
-            'meta_confidence'      => $meta['confidence']   ?? '',
-            'meta_notes'           => $meta['notes']        ?? '',
-            'has_meta_notes'       => !empty($meta['notes']),
-            'confidence_high'      => ($meta['confidence'] ?? '') === 'HIGH',
-            'confidence_medium'    => ($meta['confidence'] ?? '') === 'MEDIUM',
-            'confidence_low'       => ($meta['confidence'] ?? '') === 'LOW',
+        // Map 0–100 DCI to a bar width, clamped.
+        $dcibarwidth = max(0, min(100, (int) round($dci)));
 
-            // Cognitive Performance Index (v1.1+ only; empty values for v1.0 data).
-        ] + $this->prepare_cpi_data($data['cognitive_performance_index'] ?? null);
+        $depthlevels = ['LOW' => 1, 'MEDIUM' => 2, 'HIGH' => 3];
+
+        return [
+            'dci'                     => number_format($dci, 1),
+            'dci_band'                => $band,
+            'dci_description'         => $desc,
+            'dci_color'               => $dcicolor,
+            'dci_bar_width'           => $dcibarwidth,
+            'has_dci'                 => ($dci > 0 || !empty($band)),
+            'depth_volume'            => strtoupper($depth['volume']        ?? ''),
+            'depth_session_hours'     => number_format((float) ($depth['session_hours'] ?? 0), 1),
+            'depth_thread_breadth'    => strtoupper($depth['thread_breadth'] ?? ''),
+            'depth_rating'            => strtoupper($depth['depth_rating']  ?? ''),
+            'depth_volume_level'      => $depthlevels[strtoupper($depth['volume']        ?? '')] ?? 0,
+            'depth_breadth_level'     => $depthlevels[strtoupper($depth['thread_breadth'] ?? '')] ?? 0,
+            'depth_rating_level'      => $depthlevels[strtoupper($depth['depth_rating']  ?? '')] ?? 0,
+            'retention_indicators'    => array_map(fn($s) => ['indicator' => $s], $indicators),
+            'has_retention_indicators' => !empty($indicators),
+        ];
+    }
+
+    /**
+     * Return safe empty discussion_value defaults for v1.0/v1.1 cards.
+     *
+     * @return array
+     */
+    private function empty_discussion_value_block(): array {
+        return [
+            'dci'                      => '0.0',
+            'dci_band'                 => '',
+            'dci_description'          => '',
+            'dci_color'                => 'muted',
+            'dci_bar_width'            => 0,
+            'has_dci'                  => false,
+            'depth_volume'             => '',
+            'depth_session_hours'      => '0.0',
+            'depth_thread_breadth'     => '',
+            'depth_rating'             => '',
+            'depth_volume_level'       => 0,
+            'depth_breadth_level'      => 0,
+            'depth_rating_level'       => 0,
+            'retention_indicators'     => [],
+            'has_retention_indicators' => false,
+        ];
+    }
+
+    /**
+     * Return safe empty portfolio defaults for v1.2 cards.
+     *
+     * @return array
+     */
+    private function empty_portfolio_block(): array {
+        return [
+            'portfolio_title'    => '',
+            'portfolio_subtitle' => '',
+            'portfolio_tags'     => [],
+            'portfolio_formats'  => [],
+        ];
     }
 
     /**
      * Prepare Cognitive Performance Index data for the template.
      *
-     * Returns a flat array of CPI fields. When CPI is absent (v1.0 data),
-     * returns safe empty/false defaults so the template renders nothing
-     * for those sections without Mustache errors.
+     * Supports both v1.1 (session analyzer) and v1.2 (forum discussion analyzer)
+     * CPI component weight sets. The $isv12 flag switches the default weights
+     * when component_weights is absent from the JSON.
+     *
+     * v1.1 default component weights:
+     *   cognitive_depth 0.35 / meta_cognition 0.25 / strategic_thinking 0.20
+     *   engagement 0.15 / roi_awareness 0.05
+     *
+     * v1.2 default component weights (critical_discourse replaces roi_awareness):
+     *   cognitive_depth 0.35 / critical_discourse 0.25 / strategic_thinking 0.20
+     *   engagement 0.15 / meta_cognition 0.05
      *
      * Band colors map to the dashboard accent palette:
      *   Foundational → muted   (gray)
-     *   Developing   → warn    (orange)
-     *   Proficient   → info    (cyan)
-     *   Advanced     → accent2 (purple)
-     *   Exceptional  → accent3 (green)
+     *   Developing   → orange
+     *   Proficient   → cyan
+     *   Advanced     → purple
+     *   Exceptional  → green
      *
-     * @param  array|null $cpi  Decoded cognitive_performance_index block, or null.
+     * @param  array|null $cpi    Decoded cognitive_performance_index block, or null.
+     * @param  bool       $isv12  True if rendering a v1.2 record.
      * @return array
      */
-    private function prepare_cpi_data(?array $cpi): array {
+    private function prepare_cpi_data(?array $cpi, bool $isv12 = false): array {
         if (empty($cpi)) {
             return [
                 'has_cpi'              => false,
@@ -335,7 +467,7 @@ class renderer extends \plugin_renderer_base {
         $score = (int) ($cpi['cpi_score'] ?? 70);
         $band  = $cpi['cpi_band'] ?? '';
 
-        // Map score 70–145 to a 0–100 bar width for CSS display.
+        // Map score 70–145 to a 0–100 bar width.
         $barwidth = (int) round(($score - 70) / 75 * 100);
         $barwidth = max(0, min(100, $barwidth));
 
@@ -348,32 +480,51 @@ class renderer extends \plugin_renderer_base {
         ];
         $color = $bandcolors[$band] ?? 'muted';
 
-        // Build component score rows for the breakdown table.
-        $componentlabels = [
-            'cognitive_depth'    => 'Cognitive depth',
-            'meta_cognition'     => 'Meta-cognition',
-            'strategic_thinking' => 'Strategic thinking',
-            'engagement'         => 'Engagement',
-            'roi_awareness'      => 'ROI awareness',
-        ];
-        $componentweights = $cpi['component_weights'] ?? [
-            'cognitive_depth'    => 0.35,
-            'meta_cognition'     => 0.25,
-            'strategic_thinking' => 0.20,
-            'engagement'         => 0.15,
-            'roi_awareness'      => 0.05,
-        ];
-        $componentscores = $cpi['component_scores'] ?? [];
+        // Component labels and default weights differ between v1.1 and v1.2.
+        if ($isv12) {
+            $componentlabels = [
+                'cognitive_depth'    => 'Cognitive depth',
+                'critical_discourse' => 'Critical discourse',
+                'strategic_thinking' => 'Strategic thinking',
+                'engagement'         => 'Engagement',
+                'meta_cognition'     => 'Meta-cognition',
+            ];
+            $defaultweights = [
+                'cognitive_depth'    => 0.35,
+                'critical_discourse' => 0.25,
+                'strategic_thinking' => 0.20,
+                'engagement'         => 0.15,
+                'meta_cognition'     => 0.05,
+            ];
+        } else {
+            $componentlabels = [
+                'cognitive_depth'    => 'Cognitive depth',
+                'meta_cognition'     => 'Meta-cognition',
+                'strategic_thinking' => 'Strategic thinking',
+                'engagement'         => 'Engagement',
+                'roi_awareness'      => 'ROI awareness',
+            ];
+            $defaultweights = [
+                'cognitive_depth'    => 0.35,
+                'meta_cognition'     => 0.25,
+                'strategic_thinking' => 0.20,
+                'engagement'         => 0.15,
+                'roi_awareness'      => 0.05,
+            ];
+        }
+
+        $componentweights = $cpi['component_weights'] ?? $defaultweights;
+        $componentscores  = $cpi['component_scores']  ?? [];
 
         $components = [];
         foreach ($componentlabels as $key => $label) {
             $val    = (int) ($componentscores[$key] ?? 0);
             $weight = (float) ($componentweights[$key] ?? 0);
             $components[] = [
-                'label'       => $label,
-                'score'       => $val,
-                'weight_pct'  => (int) round($weight * 100),
-                'bar_width'   => $val,
+                'label'        => $label,
+                'score'        => $val,
+                'weight_pct'   => (int) round($weight * 100),
+                'bar_width'    => $val,
                 'contribution' => number_format($val * $weight, 1),
             ];
         }
@@ -383,7 +534,7 @@ class renderer extends \plugin_renderer_base {
             'cpi_score'            => $score,
             'cpi_band'             => $band,
             'cpi_band_description' => $cpi['cpi_band_description'] ?? '',
-            'cpi_calculation_note' => $cpi['calculation_note'] ?? '',
+            'cpi_calculation_note' => $cpi['calculation_note']     ?? '',
             'cpi_bar_width'        => $barwidth,
             'cpi_color'            => $color,
             'cpi_is_exceptional'   => $band === 'Exceptional',
@@ -394,6 +545,51 @@ class renderer extends \plugin_renderer_base {
             'cpi_components'       => $components,
             'has_cpi_components'   => !empty($components),
         ];
+    }
+
+    /**
+     * Prepare Bloom's progression — ensures all 6 levels present.
+     *
+     * @param  array $raw  Raw blooms_progression array from JSON.
+     * @return array
+     */
+    private function prepare_blooms(array $raw): array {
+        $bloomsmap = [];
+        foreach ($raw as $entry) {
+            $level = (int) ($entry['level'] ?? 0);
+            if ($level >= 1 && $level <= 6) {
+                $bloomsmap[$level] = $entry;
+            }
+        }
+        $bloomdefaults = [
+            1 => ['label' => 'Remember',  'icon' => '📖'],
+            2 => ['label' => 'Understand', 'icon' => '💡'],
+            3 => ['label' => 'Apply',      'icon' => '🔧'],
+            4 => ['label' => 'Analyze',    'icon' => '🔍'],
+            5 => ['label' => 'Evaluate',   'icon' => '⚖️'],
+            6 => ['label' => 'Create',     'icon' => '🏗️'],
+        ];
+        $result = [];
+        for ($l = 1; $l <= 6; $l++) {
+            $entry = $bloomsmap[$l] ?? [];
+            $active = (int) ($entry['dots_active'] ?? 0);
+            $result[] = [
+                'level'       => $l,
+                'label'       => $entry['label']       ?? $bloomdefaults[$l]['label'],
+                'icon'        => $entry['icon']        ?? $bloomdefaults[$l]['icon'],
+                'title'       => $entry['title']       ?? '',
+                'description' => $entry['description'] ?? '',
+                'dots_active' => $active,
+                'dot_color'   => $entry['dot_color']   ?? 'cyan',
+                'is_active'   => isset($bloomsmap[$l]),
+                'dot1'        => $active >= 1,
+                'dot2'        => $active >= 2,
+                'dot3'        => $active >= 3,
+                'dot4'        => $active >= 4,
+                'dot5'        => $active >= 5,
+            ];
+        }
+        return $result;
     }
 
     /**
@@ -408,9 +604,6 @@ class renderer extends \plugin_renderer_base {
 
     /**
      * Prepare competencies array for template rendering.
-     *
-     * Adds computed fields: bar width percentage, color CSS class,
-     * bloom label string.
      *
      * @param  array $competencies
      * @return array
@@ -428,23 +621,19 @@ class renderer extends \plugin_renderer_base {
             $score = min(100, max(0, (int) ($comp['score'] ?? 0)));
             $color = $comp['color'] ?? 'cyan';
 
-            // Use html_entity_decode then clean_param to prevent double-encoding.
-            // LLM may return & in competency names (e.g. "Planning & Evaluation").
-            // format_string() would encode these as &amp; which Mustache then
-            // re-encodes to &amp;amp; — instead we clean without HTML-encoding.
             $name = html_entity_decode($comp['name'] ?? '', ENT_QUOTES | ENT_HTML5, 'UTF-8');
             $name = clean_param($name, PARAM_TEXT);
 
             $result[] = [
-                'name'        => $name,
-                'score'       => $score,
-                'bar_width'   => $score,
-                'color'       => $color,
-                'color_class' => $colorclasses[$color] ?? 'lid-comp-cyan',
-                'bloom_level' => (int) ($comp['bloom_level'] ?? 1),
-                'bloom_label' => $comp['bloom_label'] ?? '',
-                'frameworks'  => $this->prepare_tags($comp['frameworks'] ?? []),
-                'tags'        => $this->prepare_tags($comp['tags'] ?? []),
+                'name'           => $name,
+                'score'          => $score,
+                'bar_width'      => $score,
+                'color'          => $color,
+                'color_class'    => $colorclasses[$color] ?? 'lid-comp-cyan',
+                'bloom_level'    => (int) ($comp['bloom_level'] ?? 1),
+                'bloom_label'    => $comp['bloom_label'] ?? '',
+                'frameworks'     => $this->prepare_tags($comp['frameworks'] ?? []),
+                'tags'           => $this->prepare_tags($comp['tags'] ?? []),
                 'has_frameworks' => !empty($comp['frameworks']),
             ];
         }
