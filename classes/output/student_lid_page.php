@@ -113,13 +113,13 @@ class student_lid_page implements \renderable, \templatable {
             return $this->empty_response($userid, $userpic, $courseid, $cantrigger);
         }
 
-        [$insql, $inparams] = $DB->get_in_or_equal($enabledforumids);
+        $forumidlist = implode(',', array_map('intval', $enabledforumids));
 
         $hasanypost = $DB->record_exists_sql(
             "SELECT 1 FROM {local_lid_analysis}
               WHERE scope = 'post' AND userid = :userid AND courseid = :courseid
-                AND forumid {$insql}",
-            array_merge(['userid' => $userid, 'courseid' => $courseid], $inparams)
+                AND forumid IN ({$forumidlist})",
+            ['userid' => $userid, 'courseid' => $courseid]
         );
 
         if (!$hasanypost) {
