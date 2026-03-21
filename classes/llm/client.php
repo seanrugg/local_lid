@@ -85,7 +85,7 @@ class client {
         }
 
         if (empty($this->model)) {
-            $this->model = 'gemini-2.0-flash';
+            $this->model = 'gemini-2.5-flash';
         }
 
         $this->provider = $this->detect_provider($this->endpoint);
