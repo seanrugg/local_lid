@@ -25,18 +25,16 @@
  * Moodle reads this file during plugin installation and on admin notification
  * type reset (Site Administration → Messaging → Notification preferences).
  *
+ * Note: MESSAGE_DEFAULT_LOGGEDIN and MESSAGE_DEFAULT_LOGGEDOFF were removed
+ * in Moodle 4.0. The 'defaults' key is omitted here — Moodle 4.x applies
+ * sensible defaults automatically and users adjust in their notification prefs.
+ *
  * Message providers defined here:
  *
  *   analysis_complete
  *     Sent to instructors (users with local/lid:viewforumdashboard) when
  *     LID analysis for a forum completes and all learner analyses are ready
  *     to view. Routed via message_send() in process_queue::maybe_notify_completion().
- *
- *     Default preferences:
- *       loggedin  = MESSAGE_PERMITTED (enabled when logged in)
- *       loggedoff = MESSAGE_PERMITTED (enabled when logged out / email)
- *     Both default to permitted so instructors receive notifications out of
- *     the box. Individual users can disable them in their notification prefs.
  *
  * String keys for UI labels (defined in lang/en/local_lid.php):
  *   messageprovider:analysis_complete — shown in the notification prefs UI
@@ -49,17 +47,11 @@
 defined('MOODLE_INTERNAL') || die();
 
 $messageproviders = [
-
     // -------------------------------------------------------------------------
     // analysis_complete
     // Sent to instructors when all learner analyses for a forum are ready.
     // -------------------------------------------------------------------------
     'analysis_complete' => [
-        'defaults' => [
-            MESSAGE_DEFAULT_LOGGEDIN  => MESSAGE_PERMITTED,
-            MESSAGE_DEFAULT_LOGGEDOFF => MESSAGE_PERMITTED,
-        ],
         'capability' => 'local/lid:viewforumdashboard',
     ],
-
 ];
