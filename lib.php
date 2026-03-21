@@ -181,14 +181,6 @@ function local_lid_extend_navigation_user_settings(
  * \local_lid\task\process_queue scheduled task and writes it to the
  * task_scheduled table so the new interval takes effect without manual
  * admin intervention.
- *
- * Interval mapping:
- *   1 min  → every minute
- *   5 min  → every 5 minutes
- *   15 min → every 15 minutes
- *   60 min → top of every hour
- *   1440   → midnight daily
- *   other  → every N minutes where N = interval value
  */
 function local_lid_after_config_change(): void {
     global $DB;
@@ -247,7 +239,7 @@ function local_lid_after_config_change(): void {
  *
  * Reads prompts/default-session-analyzer.md from the plugin directory and
  * writes it to the site-level settings row (courseid = 0). Called once from
- * xmldb_local_lid_install() which is defined in db/install.php (to be created).
+ * xmldb_local_lid_install() in db/install.php.
  *
  * Safe to call multiple times — checks for the existence of the site-level
  * row before inserting.
@@ -264,40 +256,43 @@ function local_lid_seed_default_prompt(): void {
     $prompttext = file_exists($promptfile) ? file_get_contents($promptfile) : '';
 
     $record = new stdClass();
-    $record->courseid        = 0;
-    $record->llm_endpoint    = '';
-    $record->llm_apikey      = '';
-    $record->llm_model       = 'claude-sonnet-4-6';
-    $record->llm_maxtokens   = 4096;
-    $record->llm_timeout     = 60;
-    $record->prompt_template = $prompttext;
-    $record->prompt_locked   = 0;
-    $record->trigger_async   = 1;
-    $record->trigger_cron    = 1;
-    $record->trigger_manual  = 1;
-    $record->cron_interval   = 5;
-    $record->cron_batchsize  = 10;
+    $record->courseid            = 0;
+    $record->llm_endpoint        = '';
+    $record->llm_apikey          = '';
+    $record->llm_model           = 'claude-sonnet-4-6';
+    $record->llm_maxtokens       = 4096;
+    $record->llm_timeout         = 60;
+    $record->prompt_template     = $prompttext;
+    $record->prompt_locked       = 0;
+    $record->trigger_async       = 1;
+    $record->trigger_cron        = 1;
+    $record->trigger_manual      = 1;
+    $record->cron_interval       = 5;
+    $record->cron_batchsize      = 10;
     $record->lid_default_enabled = 0;
     $record->lid_force_disabled  = 0;
-    $record->timecreated     = time();
-    $record->timemodified    = time();
+    $record->timecreated         = time();
+    $record->timemodified        = time();
 
     $DB->insert_record('local_lid_settings', $record);
 }
 
 // =============================================================================
-// Forum Edit Settings integration — inject LID toggle
+// Forum Edit Settings integration — inject LID toggle + discussion model
 // =============================================================================
 
 /**
- * Inject the LID enable/disable toggle into the forum activity's Edit Settings
- * form (mod_edit.php). Called by Moodle for every activity module — we bail
- * immediately for anything that isn't mod_forum.
+ * Inject LID settings into the forum activity's Edit Settings form.
  *
- * The toggle appears as a new section "Learning Intelligence Dashboard" at the
- * bottom of the forum settings form, above the Save buttons.
+ * Adds a "Learning Intelligence Dashboard" section with:
+ *   1. Enable/disable toggle (advcheckbox)
+ *   2. Discussion model selector (select) — controls which Critical Discourse
+ *      rubric variant the LLM applies when assessing forum discussions.
  *
- * @param moodleform_mod $formwrapper  The mod_edit form wrapper.
+ * Called by Moodle for every activity module — bails immediately for
+ * anything that isn't mod_forum.
+ *
+ * @param moodleform_mod  $formwrapper The mod_edit form wrapper.
  * @param MoodleQuickForm $mform       The underlying HTML_QuickForm object.
  */
 function local_lid_coursemodule_standard_elements($formwrapper, $mform): void {
@@ -325,18 +320,17 @@ function local_lid_coursemodule_standard_elements($formwrapper, $mform): void {
     // Is LID force-disabled site-wide?
     $forcedisabled = (bool) get_config('local_lid', 'lid_force_disabled');
 
-    // Resolve current enabled state for this forum.
+    // Resolve current config for this forum.
+    $config  = $forumid ? $DB->get_record('local_lid_forum_config', ['forumid' => $forumid]) : false;
     $enabled = false;
-    if ($forumid) {
-        $config = $DB->get_record('local_lid_forum_config', ['forumid' => $forumid]);
-        if ($config !== false) {
-            $enabled = (bool) $config->enabled;
-        } else {
-            // No row yet — use site default.
-            $enabled = (bool) get_config('local_lid', 'lid_default_enabled');
-        }
+    $currentmodel = \local_lid\llm\prompt_builder::MODEL_OPEN_ENGAGEMENT;
+
+    if ($config !== false) {
+        $enabled      = (bool) $config->enabled;
+        $currentmodel = $config->discussion_model
+            ?? \local_lid\llm\prompt_builder::MODEL_OPEN_ENGAGEMENT;
     } else {
-        // New forum being created — use site default.
+        // New forum or no config row yet — use site defaults.
         $enabled = (bool) get_config('local_lid', 'lid_default_enabled');
     }
 
@@ -345,7 +339,7 @@ function local_lid_coursemodule_standard_elements($formwrapper, $mform): void {
         get_string('forum_lid_section', 'local_lid'));
 
     if ($forcedisabled) {
-        // Show a notice — no toggle when force-disabled.
+        // Show a notice — no controls when force-disabled.
         $mform->addElement('static', 'local_lid_force_notice', '',
             html_writer::div(
                 get_string('forum_lid_force_disabled_notice', 'local_lid'),
@@ -353,6 +347,7 @@ function local_lid_coursemodule_standard_elements($formwrapper, $mform): void {
             )
         );
     } else {
+        // ---- Enable/disable toggle ----
         $mform->addElement('advcheckbox', 'local_lid_enabled',
             get_string('forum_lid_enabled_label', 'local_lid'),
             get_string('forum_lid_enabled_help', 'local_lid'),
@@ -360,18 +355,56 @@ function local_lid_coursemodule_standard_elements($formwrapper, $mform): void {
         );
         $mform->setDefault('local_lid_enabled', (int) $enabled);
         $mform->addHelpButton('local_lid_enabled', 'forum_lid_enabled_label', 'local_lid');
+
+        // ---- Discussion model selector ----
+        // Build options array from prompt_builder constants.
+        $modeldescriptions = \local_lid\llm\prompt_builder::get_model_descriptions();
+        $modeloptions      = [];
+        foreach ($modeldescriptions as $value => $description) {
+            // Use the short label (first sentence before the em-dash).
+            $label = get_string('discussion_model_' . $value, 'local_lid');
+            $modeloptions[$value] = $label;
+        }
+
+        $mform->addElement('select', 'local_lid_discussion_model',
+            get_string('forum_config_discussion_model', 'local_lid'),
+            $modeloptions
+        );
+        $mform->setDefault('local_lid_discussion_model', $currentmodel);
+        $mform->addHelpButton('local_lid_discussion_model',
+            'forum_config_discussion_model', 'local_lid');
+
+        // Add a description paragraph below the selector.
+        $mform->addElement('static', 'local_lid_model_desc', '',
+            html_writer::tag('p',
+                get_string('forum_config_discussion_model_desc', 'local_lid'),
+                ['class' => 'form-text text-muted', 'style' => 'font-size:12px']
+            )
+        );
+
+        // Add the LID guidance notice about when analysis triggers.
+        $mform->addElement('static', 'local_lid_trigger_notice', '',
+            html_writer::div(
+                get_string('dashboard_forum_lid_guidance', 'local_lid'),
+                'alert alert-info',
+                ['style' => 'font-size:12px;margin-top:8px']
+            )
+        );
     }
 
-    // Load the forum_config AMD module via PAGE — safe alternative to inline script.
+    // Load the forum_config AMD module.
     global $PAGE;
     $PAGE->requires->js_call_amd('local_lid/forum_config', 'init', []);
 }
 
 /**
- * Save the LID enable/disable state after a forum Edit Settings form is
- * submitted. Called by Moodle for every activity module — bail for non-forum.
+ * Save LID settings after the forum Edit Settings form is submitted.
  *
- * Creates or updates the local_lid_forum_config row for this forum.
+ * Saves:
+ *   - local_lid_enabled     (int 0|1)   → local_lid_forum_config.enabled
+ *   - local_lid_discussion_model (string) → local_lid_forum_config.discussion_model
+ *
+ * Called by Moodle for every activity module — bails for non-forum.
  *
  * @param stdClass $data   The submitted form data object.
  * @param stdClass $course The course record.
@@ -397,24 +430,39 @@ function local_lid_coursemodule_edit_post_actions($data, $course): stdClass {
         return $data;
     }
 
-    $enabled = isset($data->local_lid_enabled) ? (int) (bool) $data->local_lid_enabled : 0;
+    $enabled = isset($data->local_lid_enabled)
+        ? (int) (bool) $data->local_lid_enabled
+        : 0;
+
+    // Validate discussion_model — reject unknown values, fall back to default.
+    $validmodels = [
+        \local_lid\llm\prompt_builder::MODEL_INDEPENDENT_FIRST,
+        \local_lid\llm\prompt_builder::MODEL_OPEN_ENGAGEMENT,
+        \local_lid\llm\prompt_builder::MODEL_STRUCTURED_DEBATE,
+    ];
+    $model = isset($data->local_lid_discussion_model)
+        && in_array($data->local_lid_discussion_model, $validmodels, true)
+        ? $data->local_lid_discussion_model
+        : \local_lid\llm\prompt_builder::MODEL_OPEN_ENGAGEMENT;
 
     $existing = $DB->get_record('local_lid_forum_config', ['forumid' => $forumid]);
 
     if ($existing) {
         $DB->update_record('local_lid_forum_config', (object) [
-            'id'           => $existing->id,
-            'enabled'      => $enabled,
-            'timemodified' => time(),
+            'id'               => $existing->id,
+            'enabled'          => $enabled,
+            'discussion_model' => $model,
+            'timemodified'     => time(),
         ]);
     } else {
         $DB->insert_record('local_lid_forum_config', (object) [
-            'forumid'         => $forumid,
-            'courseid'        => $courseid,
-            'enabled'         => $enabled,
-            'prompt_override' => null,
-            'timecreated'     => time(),
-            'timemodified'    => time(),
+            'forumid'          => $forumid,
+            'courseid'         => $courseid,
+            'enabled'          => $enabled,
+            'discussion_model' => $model,
+            'prompt_override'  => null,
+            'timecreated'      => time(),
+            'timemodified'     => time(),
         ]);
     }
 
@@ -427,8 +475,7 @@ function local_lid_coursemodule_edit_post_actions($data, $course): stdClass {
 
 /**
  * Extend course navigation to add the LID dashboard link and course
- * settings link. Works with both classic themes (left-nav courseadmin block)
- * and Moodle 4.x/5.x Boost theme (secondary nav tabs / More menu).
+ * settings link.
  *
  * @param navigation_node $navigation
  * @param stdClass        $course
@@ -444,10 +491,9 @@ function local_lid_extend_navigation_course(
         return;
     }
 
-    // Course LID dashboard — add under Reports if that node exists,
-    // otherwise fall back to the top-level navigation node.
+    // Course LID dashboard.
     $reportsnode = $navigation->find('coursereports', navigation_node::TYPE_CONTAINER);
-    $parent = $reportsnode ?: $navigation;
+    $parent      = $reportsnode ?: $navigation;
 
     $url = new moodle_url('/local/lid/report.php', ['courseid' => $course->id]);
     $parent->add(
@@ -460,14 +506,10 @@ function local_lid_extend_navigation_course(
     );
 
     // Course LID settings (bulk enable/disable per forum).
-    // Classic themes: add under the courseadmin node (left nav block).
-    // Boost/modern themes: courseadmin doesn't exist — add directly to the
-    // navigation node, which places it in the More menu tab.
     if (has_capability('local/lid:configureforum', $context)) {
-        $settingsurl = new moodle_url('/local/lid/course_settings.php',
+        $settingsurl  = new moodle_url('/local/lid/course_settings.php',
             ['courseid' => $course->id]);
-
-        $adminnode = $navigation->find('courseadmin', navigation_node::TYPE_COURSE);
+        $adminnode    = $navigation->find('courseadmin', navigation_node::TYPE_COURSE);
         $settingsparent = $adminnode ?: $navigation;
 
         $settingsparent->add(
@@ -491,13 +533,13 @@ function local_lid_extend_navigation_course(
  * local_lid does not currently serve any user-uploaded files, but Moodle
  * requires this function to exist. Returns false for all requests.
  *
- * @param stdClass $course        Course object.
- * @param stdClass $cm            Course module object (null if not module context).
- * @param context  $context       Context object.
- * @param string   $filearea      File area name.
- * @param array    $args          Extra arguments.
- * @param bool     $forcedownload Force download flag.
- * @param array    $options       Additional options.
+ * @param stdClass $course
+ * @param stdClass $cm
+ * @param context  $context
+ * @param string   $filearea
+ * @param array    $args
+ * @param bool     $forcedownload
+ * @param array    $options
  * @return false
  */
 function local_lid_pluginfile(
