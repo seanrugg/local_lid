@@ -25,24 +25,24 @@
  * Actions:
  *
  *   trigger
- *     Manually enqueue a single post or entire forum for (re-)analysis.
- *     Required params: analysisid (int) OR forumid (int) + courseid (int)
+ *     Manually enqueue a forum for (re-)analysis.
+ *     Required params: forumid (int) + courseid (int), OR analysisid (int)
  *     Required capability: local/lid:triggeranalysis (module context)
  *     Response: { success: true, queued: N }
  *
  *   status
- *     Poll the analysis status for a queue item or analysis record.
+ *     Poll the analysis status for an analysis record.
  *     Required params: analysisid (int)
  *     Required capability: local/lid:viewforumdashboard (module context)
  *     Response: { status: string, analysis_json: string|null }
  *
  *   forum_config
- *     Save the LID enabled/disabled state for a forum, and optionally
- *     save a prompt override.
+ *     Save the LID enabled/disabled state, discussion model, and optional
+ *     prompt override for a forum.
  *     Required params: forumid (int), courseid (int), enabled (0|1)
- *     Optional params: prompt_override (string)
+ *     Optional params: discussion_model (string), prompt_override (string)
  *     Required capability: local/lid:configureforum (module context)
- *     Response: { success: true }
+ *     Response: { success: true, enabled: bool, discussion_model: string }
  *
  *   save_prompt
  *     Save a course-level prompt override.
@@ -50,6 +50,11 @@
  *     Required capability: local/lid:editprompt (course context)
  *     Blocked when prompt_locked = 1.
  *     Response: { success: true }
+ *
+ *   reset_prompt_default
+ *     Return the plugin's shipped default prompt text.
+ *     Required capability: local/lid:managesitesettings (system context)
+ *     Response: { success: true, prompt: string }
  *
  * All error responses follow: { error: true, message: string }
  *
@@ -137,11 +142,12 @@ try {
 // =============================================================================
 
 /**
- * Handle 'trigger' action — manually enqueue one post or all posts in a forum.
+ * Handle 'trigger' action — manually queue analysis for a forum.
  *
- * Two modes:
- *   - Single post:  analysisid param provided.
- *   - Whole forum:  forumid + courseid params provided (no analysisid).
+ * Three modes:
+ *   - Single analysis row:  analysisid param provided.
+ *   - Whole forum:          forumid + courseid params provided.
+ *   - Course-wide:          courseid only (no forumid, no analysisid).
  *
  * @return array JSON-serialisable response.
  */
@@ -155,7 +161,6 @@ function handle_trigger(): array {
     $courseid   = optional_param('courseid',   0, PARAM_INT);
 
     if ($analysisid) {
-        // Single post mode — load the analysis record to resolve context.
         $analysis = $DB->get_record('local_lid_analysis',
             ['id' => $analysisid], '*', MUST_EXIST);
 
@@ -169,19 +174,20 @@ function handle_trigger(): array {
     }
 
     if ($forumid && $courseid) {
-        // Whole-forum mode — backfill and enqueue all posts in this forum.
         $cm = get_coursemodule_from_instance('forum', $forumid, $courseid,
             false, MUST_EXIST);
         $context = context_module::instance($cm->id);
         require_capability('local/lid:triggeranalysis', $context);
 
-        $queued = backfill_and_enqueue_forum($forumid, $courseid);
+        $queued = \local_lid\observer::queue_forum_analysis(
+            $courseid,
+            $forumid,
+            \local_lid\observer::PRIORITY_MANUAL
+        );
         return ['success' => true, 'queued' => $queued];
     }
 
     if ($courseid && !$forumid && !$analysisid) {
-        // Course-wide mode — backfill and enqueue all posts across all
-        // LID-enabled forums in this course.
         $context = context_course::instance($courseid);
         require_capability('local/lid:triggeranalysis', $context);
 
@@ -194,82 +200,17 @@ function handle_trigger(): array {
 
         $queued = 0;
         foreach ($enabledforums as $config) {
-            $queued += backfill_and_enqueue_forum((int) $config->forumid, $courseid);
+            $queued += \local_lid\observer::queue_forum_analysis(
+                $courseid,
+                (int) $config->forumid,
+                \local_lid\observer::PRIORITY_MANUAL
+            );
         }
 
         return ['success' => true, 'queued' => $queued];
     }
 
     throw new \moodle_exception('missingparam', '', '', 'analysisid or forumid+courseid or courseid');
-}
-
-/**
- * Backfill missing analysis records for all posts in a forum, then enqueue
- * all pending/error records for processing.
- *
- * Backfill covers posts submitted before LID was enabled on the forum
- * (the observer never fired for them so no analysis row exists).
- *
- * @param  int $forumid
- * @param  int $courseid
- * @return int Number of items enqueued.
- */
-function backfill_and_enqueue_forum(int $forumid, int $courseid): int {
-    global $DB;
-
-    // Get all post IDs that already have analysis records.
-    $existingpostids = $DB->get_fieldset_select(
-        'local_lid_analysis',
-        'postid',
-        "scope = 'post' AND forumid = :forumid",
-        ['forumid' => $forumid]
-    );
-    $existingpostids = array_map('intval', $existingpostids);
-
-    // Get all real forum posts (exclude userid=0 system posts).
-    $allposts = $DB->get_records_sql(
-        "SELECT p.id AS postid, p.userid, d.forum AS forumid,
-                d.course AS courseid, p.discussion AS discussionid
-           FROM {forum_posts} p
-           JOIN {forum_discussions} d ON d.id = p.discussion
-          WHERE d.forum = :forumid
-            AND p.userid > 0",
-        ['forumid' => $forumid]
-    );
-
-    // Create analysis records for any posts that don't have one.
-    foreach ($allposts as $post) {
-        if (!in_array((int) $post->postid, $existingpostids, true)) {
-            $DB->insert_record('local_lid_analysis', (object) [
-                'scope'        => 'post',
-                'postid'       => (int) $post->postid,
-                'userid'       => (int) $post->userid,
-                'forumid'      => $forumid,
-                'courseid'     => $courseid,
-                'discussionid' => (int) $post->discussionid,
-                'status'       => 'pending',
-                'prompt_hash'  => null,
-                'timecreated'  => time(),
-                'timemodified' => time(),
-            ]);
-        }
-    }
-
-    // Enqueue all pending/error post-scope analyses for this forum.
-    $analyses = $DB->get_records_select(
-        'local_lid_analysis',
-        "scope = 'post' AND forumid = :forumid AND status != 'processing'",
-        ['forumid' => $forumid]
-    );
-
-    $queued = 0;
-    foreach ($analyses as $analysis) {
-        if (enqueue_single_analysis($analysis)) {
-            $queued++;
-        }
-    }
-
-    return $queued;
 }
 
 /**
@@ -284,22 +225,18 @@ function backfill_and_enqueue_forum(int $forumid, int $courseid): int {
 function enqueue_single_analysis(\stdClass $analysis): bool {
     global $DB;
 
-    // Don't re-enqueue something currently being processed.
     if ($analysis->status === 'processing') {
         return false;
     }
 
-    // Reset status to pending.
     $DB->update_record('local_lid_analysis', (object) [
         'id'           => $analysis->id,
         'status'       => 'pending',
         'timemodified' => time(),
     ]);
 
-    // Remove any existing queue entry.
     $DB->delete_records('local_lid_queue', ['analysisid' => $analysis->id]);
 
-    // Insert high-priority queue item.
     $DB->insert_record('local_lid_queue', (object) [
         'analysisid'  => $analysis->id,
         'priority'    => \local_lid\observer::PRIORITY_MANUAL,
@@ -315,9 +252,6 @@ function enqueue_single_analysis(\stdClass $analysis): bool {
 /**
  * Handle 'status' action — poll current status of an analysis record.
  *
- * Returns the status string and, when complete, the analysis JSON so the
- * AMD module can update the dashboard panel without a page reload.
- *
  * @return array JSON-serialisable response.
  */
 function handle_status(): array {
@@ -328,7 +262,6 @@ function handle_status(): array {
     $analysis = $DB->get_record('local_lid_analysis',
         ['id' => $analysisid], '*', MUST_EXIST);
 
-    // Resolve context for capability check.
     if ($analysis->forumid) {
         $cm = get_coursemodule_from_instance('forum', $analysis->forumid,
             $analysis->courseid, false, MUST_EXIST);
@@ -352,8 +285,18 @@ function handle_status(): array {
 }
 
 /**
- * Handle 'forum_config' action — save LID enable/disable and optional prompt
- * override for a forum.
+ * Handle 'forum_config' action — save LID enable/disable, discussion model,
+ * and optional prompt override for a forum.
+ *
+ * Accepted params:
+ *   forumid          int     Required.
+ *   courseid         int     Required.
+ *   enabled          int     Required. 0 or 1.
+ *   discussion_model string  Optional. One of: independent_first | open_engagement |
+ *                            structured_debate. Defaults to 'open_engagement' if
+ *                            absent or not one of the three recognised values.
+ *   prompt_override  string  Optional. Only accepted when prompt is not locked
+ *                            and user has local/lid:editprompt.
  *
  * @return array JSON-serialisable response.
  */
@@ -368,6 +311,17 @@ function handle_forum_config(): array {
         false, MUST_EXIST);
     $context = context_module::instance($cm->id);
     require_capability('local/lid:configureforum', $context);
+
+    // Validate discussion_model — reject unknown values, default to open_engagement.
+    $validmodels = [
+        \local_lid\llm\prompt_builder::MODEL_INDEPENDENT_FIRST,
+        \local_lid\llm\prompt_builder::MODEL_OPEN_ENGAGEMENT,
+        \local_lid\llm\prompt_builder::MODEL_STRUCTURED_DEBATE,
+    ];
+    $rawmodel        = optional_param('discussion_model', '', PARAM_ALPHANUMEXT);
+    $discussionmodel = in_array($rawmodel, $validmodels, true)
+        ? $rawmodel
+        : \local_lid\llm\prompt_builder::MODEL_OPEN_ENGAGEMENT;
 
     // Prompt override — only accepted if prompt is not locked.
     $promptoverride = null;
@@ -386,9 +340,10 @@ function handle_forum_config(): array {
 
     if ($existing) {
         $update = (object) [
-            'id'           => $existing->id,
-            'enabled'      => (int) (bool) $enabled,
-            'timemodified' => time(),
+            'id'               => $existing->id,
+            'enabled'          => (int) (bool) $enabled,
+            'discussion_model' => $discussionmodel,
+            'timemodified'     => time(),
         ];
         if (!$promptlocked) {
             $update->prompt_override = $promptoverride;
@@ -396,24 +351,26 @@ function handle_forum_config(): array {
         $DB->update_record('local_lid_forum_config', $update);
     } else {
         $DB->insert_record('local_lid_forum_config', (object) [
-            'forumid'         => $forumid,
-            'courseid'        => $courseid,
-            'enabled'         => (int) (bool) $enabled,
-            'prompt_override' => $promptoverride,
-            'timecreated'     => time(),
-            'timemodified'    => time(),
+            'forumid'          => $forumid,
+            'courseid'         => $courseid,
+            'enabled'          => (int) (bool) $enabled,
+            'discussion_model' => $discussionmodel,
+            'prompt_override'  => $promptoverride,
+            'timecreated'      => time(),
+            'timemodified'     => time(),
         ]);
     }
 
-    return ['success' => true, 'enabled' => (bool) $enabled];
+    return [
+        'success'          => true,
+        'enabled'          => (bool) $enabled,
+        'discussion_model' => $discussionmodel,
+    ];
 }
 
 /**
  * Handle 'reset_prompt_default' action — return the plugin's shipped default
  * prompt text so the admin settings page JS can load it into the textarea.
- *
- * The admin still needs to submit the settings form to persist the value.
- * This action only reads the file; it does not write to the database.
  *
  * @return array JSON-serialisable response.
  */
@@ -454,7 +411,6 @@ function handle_save_prompt(): array {
     $context = context_course::instance($courseid);
     require_capability('local/lid:editprompt', $context);
 
-    // Block if prompt is locked at site level.
     if ((bool) get_config('local_lid', 'prompt_locked')) {
         throw new \required_capability_exception(
             $context,
@@ -469,8 +425,7 @@ function handle_save_prompt(): array {
         throw new \moodle_exception('invaliddata', 'error', '', 'Prompt cannot be empty.');
     }
 
-    // Sentinel value sent by prompt_editor.js reset-to-site-default button.
-    // Deletes the course-level override row so the course falls back to the site prompt.
+    // Sentinel value from reset-to-site-default button — deletes course override.
     if ($prompt === '__RESET_TO_SITE_DEFAULT__') {
         $DB->delete_records('local_lid_settings', ['courseid' => $courseid]);
         return [
@@ -479,7 +434,6 @@ function handle_save_prompt(): array {
         ];
     }
 
-    // Upsert course-level settings row.
     $existing = $DB->get_record('local_lid_settings', ['courseid' => $courseid]);
 
     if ($existing) {
