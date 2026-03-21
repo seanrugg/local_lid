@@ -15,7 +15,10 @@
 // along with Moodle.  If not, see <https://www.gnu.org/licenses/>.
 
 /**
- * LID Schema v1.0 validator for local_lid.
+ * LID Schema validator for local_lid.
+ *
+ * Supports Schema v1.0, v1.1 (portfolio/session analyses) and
+ * Schema v1.2 (forum discussion analyses).
  *
  * @package    local_lid
  * @copyright  2026 Learning Intelligence Dashboard Project Contributors
@@ -27,7 +30,7 @@ namespace local_lid\analysis;
 defined('MOODLE_INTERNAL') || die();
 
 /**
- * Validates a raw LLM response string against LID Schema v1.0 or v1.1.
+ * Validates a raw LLM response string against LID Schema v1.0, v1.1, or v1.2.
  *
  * Validation is intentionally pragmatic rather than strict. The LLM will
  * sometimes return values outside the documented ranges (e.g. a score of
@@ -48,42 +51,40 @@ defined('MOODLE_INTERNAL') || die();
  * Schema version compatibility:
  *   v1.0 — original schema; cognitive_performance_index absent (optional).
  *   v1.1 — adds cognitive_performance_index with CPI score, band, and
- *           component scores. All v1.0 fields remain unchanged.
- *           v1.1 analyses produced by the v1.2 rubric prompt include
- *           scored sub-fields and a mandatory calculation_note.
+ *           component scores.
+ *   v1.2 — forum discussion analyzer schema. Replaces roi with
+ *           discussion_value, replaces employer_value+portfolio with
+ *           instructor_notes, adds critical_discourse_score to scores.
  *
- * The validator also detects truncated JSON — a common failure mode on
- * Comet/Perplexity and any endpoint with a tight output token limit —
- * and surfaces it as a distinct fatal error so the session_analyser can
- * increase max_tokens or split the request on retry.
+ * Validation branches on schema_version detected in the JSON:
+ *   v1.0/v1.1 → portfolio/session validation path
+ *   v1.2      → forum discussion validation path
  *
  * Usage:
  *   $validator = new \local_lid\analysis\schema_validator();
  *   $result    = $validator->validate($rawstring);
  *
  *   if ($result->is_valid()) {
- *       $json = $result->get_data(); // Decoded array, ready to store.
+ *       $json = $result->get_data();
  *   } else {
- *       $errors = $result->get_errors(); // Array of error strings.
+ *       $errors = $result->get_errors();
  *   }
  *
- *   $warnings = $result->get_warnings(); // Always check even when valid.
+ *   $warnings = $result->get_warnings();
  */
 class schema_validator {
 
     /** @var string Default/current schema version produced by the v1.2 prompt. */
-    const SCHEMA_VERSION = '1.1';
+    const SCHEMA_VERSION = '1.2';
 
     /** @var string[] All schema versions this validator accepts. */
-    const SUPPORTED_VERSIONS = ['1.0', '1.1'];
+    const SUPPORTED_VERSIONS = ['1.0', '1.1', '1.2'];
 
-    /**
-     * Required root-level keys. Every valid LID JSON object must have all of
-     * these present and non-null.
-     * cognitive_performance_index is v1.1+ only and is treated as optional
-     * so that v1.0 data stored before the upgrade continues to validate.
-     */
-    private const REQUIRED_ROOT_KEYS = [
+    // -------------------------------------------------------------------------
+    // Required keys — v1.0 / v1.1 (portfolio/session path)
+    // -------------------------------------------------------------------------
+
+    private const REQUIRED_ROOT_KEYS_V1 = [
         'schema_version',
         'session',
         'scores',
@@ -97,46 +98,7 @@ class schema_validator {
         'meta',
     ];
 
-    /**
-     * Required keys within cognitive_performance_index (v1.1+ only).
-     * Validated only when the key is present.
-     */
-    private const REQUIRED_CPI_KEYS = [
-        'cpi_score',
-        'cpi_band',
-        'cpi_band_description',
-        'calculation_note',
-    ];
-
-    /**
-     * Valid CPI band labels.
-     */
-    private const VALID_CPI_BANDS = [
-        'Foundational',
-        'Developing',
-        'Proficient',
-        'Advanced',
-        'Exceptional',
-    ];
-
-    /**
-     * Required keys within the session object.
-     */
-    private const REQUIRED_SESSION_KEYS = [
-        'id',
-        'date',
-        'title',
-        'source',
-        'source_type',
-        'duration_minutes',
-        'topic_summary',
-        'tags',
-    ];
-
-    /**
-     * Required keys within the scores object.
-     */
-    private const REQUIRED_SCORES_KEYS = [
+    private const REQUIRED_SCORES_KEYS_V1 = [
         'competency_domains_count',
         'cognitive_depth_score',
         'strategic_thinking_pct',
@@ -145,9 +107,6 @@ class schema_validator {
         'meta_cognition_score',
     ];
 
-    /**
-     * Required keys within the roi object.
-     */
     private const REQUIRED_ROI_KEYS = [
         'knowledge_value_usd',
         'time_efficiency_multiplier',
@@ -159,9 +118,79 @@ class schema_validator {
         'session_hours',
     ];
 
-    /**
-     * Required keys within each competency object.
-     */
+    // -------------------------------------------------------------------------
+    // Required keys — v1.2 (forum discussion path)
+    // -------------------------------------------------------------------------
+
+    private const REQUIRED_ROOT_KEYS_V12 = [
+        'schema_version',
+        'session',
+        'scores',
+        'competencies',
+        'radar',
+        'blooms_progression',
+        'discussion_value',
+        'cognitive_performance_index',
+        'timeline',
+        'instructor_notes',
+        'meta',
+    ];
+
+    private const REQUIRED_SCORES_KEYS_V12 = [
+        'competency_domains_count',
+        'cognitive_depth_score',
+        'critical_discourse_score',
+        'strategic_thinking_pct',
+        'engagement_score',
+        'meta_cognition_score',
+    ];
+
+    private const REQUIRED_DISCUSSION_VALUE_KEYS = [
+        'application_readiness',
+        'participation_depth',
+        'session_hours',
+        'discussion_contribution_index',
+        'dci_components',
+        'retention_indicators',
+    ];
+
+    private const REQUIRED_DCI_COMPONENT_KEYS = [
+        'idea_originality',
+        'reasoning_transparency',
+        'peer_advancement',
+        'critical_challenge',
+        'knowledge_integration',
+    ];
+
+    private const REQUIRED_INSTRUCTOR_NOTES_KEYS = [
+        'participation_summary',
+        'standout_moments',
+        'growth_indicators',
+        'constructive_feedback',
+    ];
+
+    // -------------------------------------------------------------------------
+    // Shared required keys
+    // -------------------------------------------------------------------------
+
+    private const REQUIRED_CPI_KEYS = [
+        'cpi_score',
+        'cpi_band',
+        'cpi_band_description',
+        'calculation_note',
+    ];
+
+    private const REQUIRED_SESSION_KEYS = [
+        'id',
+        'date',
+        'title',
+        'source',
+        'source_type',
+        'duration_minutes',
+        'topic_summary',
+        'tags',
+    ];
+
     private const REQUIRED_COMPETENCY_KEYS = [
         'name',
         'score',
@@ -170,9 +199,6 @@ class schema_validator {
         'bloom_label',
     ];
 
-    /**
-     * Required keys within each blooms_progression object.
-     */
     private const REQUIRED_BLOOMS_KEYS = [
         'level',
         'label',
@@ -181,9 +207,23 @@ class schema_validator {
         'dots_active',
     ];
 
-    /**
-     * Valid Bloom's labels mapped to their numeric levels.
-     */
+    // -------------------------------------------------------------------------
+    // Enum constants (shared)
+    // -------------------------------------------------------------------------
+
+    private const VALID_CPI_BANDS = [
+        'Foundational',
+        'Developing',
+        'Proficient',
+        'Advanced',
+        'Exceptional',
+    ];
+
+    private const VALID_READINESS    = ['LOW', 'MEDIUM', 'HIGH', 'EXCEPTIONAL'];
+    private const VALID_DEPTH        = ['LOW', 'MEDIUM', 'HIGH'];
+    private const VALID_COLORS       = ['cyan', 'green', 'orange', 'purple'];
+    private const VALID_DOT_COLORS   = ['cyan', 'green', 'orange', 'purple'];
+
     private const BLOOMS_LEVEL_MAP = [
         1 => 'Remember',
         2 => 'Understand',
@@ -193,21 +233,6 @@ class schema_validator {
         6 => 'Create',
     ];
 
-    /**
-     * Valid application_readiness values.
-     */
-    private const VALID_READINESS = ['LOW', 'MEDIUM', 'HIGH', 'EXCEPTIONAL'];
-
-    /**
-     * Valid competency color values.
-     */
-    private const VALID_COLORS = ['cyan', 'green', 'orange', 'purple'];
-
-    /**
-     * Valid dot_color values for blooms_progression entries.
-     */
-    private const VALID_DOT_COLORS = ['cyan', 'green', 'orange', 'purple'];
-
     // -------------------------------------------------------------------------
     // Public API
     // -------------------------------------------------------------------------
@@ -215,9 +240,8 @@ class schema_validator {
     /**
      * Validate a raw LLM response string.
      *
-     * Strips any accidental markdown fences the LLM may have added despite
-     * being instructed not to, then attempts JSON decode and structural
-     * validation.
+     * Strips markdown fences, detects truncation, decodes JSON, checks
+     * schema_version, then branches to the appropriate validation path.
      *
      * @param  string $raw The raw string returned by the LLM client.
      * @return validation_result
@@ -249,7 +273,7 @@ class schema_validator {
             );
         }
 
-        // Step 4 — schema_version check. Accept all supported versions.
+        // Step 4 — schema_version check.
         $version = $data['schema_version'] ?? null;
         if (!in_array($version, self::SUPPORTED_VERSIONS, true)) {
             return validation_result::fatal(
@@ -259,8 +283,30 @@ class schema_validator {
             );
         }
 
-        // Step 5 — required root keys.
-        foreach (self::REQUIRED_ROOT_KEYS as $key) {
+        // Step 5 — branch on schema version.
+        if ($version === '1.2') {
+            return $this->validate_v12($data, $errors, $warnings);
+        }
+
+        return $this->validate_v1($data, $errors, $warnings);
+    }
+
+    // -------------------------------------------------------------------------
+    // v1.0 / v1.1 validation path
+    // -------------------------------------------------------------------------
+
+    /**
+     * Validate a decoded v1.0 or v1.1 JSON object.
+     *
+     * @param  array  $data
+     * @param  array  $errors
+     * @param  array  $warnings
+     * @return validation_result
+     */
+    private function validate_v1(array $data, array $errors, array $warnings): validation_result {
+
+        // Required root keys.
+        foreach (self::REQUIRED_ROOT_KEYS_V1 as $key) {
             if (!array_key_exists($key, $data) || $data[$key] === null) {
                 $errors[] = "Missing required root key: {$key}";
             }
@@ -270,9 +316,9 @@ class schema_validator {
             return validation_result::fatal($errors, $warnings, validation_result::REASON_MISSING_KEYS);
         }
 
-        // Step 6 — validate sub-objects.
+        // Sub-object validation.
         $this->validate_session($data['session'], $errors, $warnings);
-        $this->validate_scores($data['scores'], $errors, $warnings);
+        $this->validate_scores_v1($data['scores'], $errors, $warnings);
         $this->validate_competencies($data['competencies'], $errors, $warnings);
         $this->validate_radar($data['radar'], $errors, $warnings);
         $this->validate_blooms_progression($data['blooms_progression'], $errors, $warnings);
@@ -282,15 +328,12 @@ class schema_validator {
         $this->validate_portfolio($data['portfolio'], $warnings);
         $this->validate_meta($data['meta'], $warnings);
 
-        // CPI is present in v1.1 analyses; optional but validated when present.
+        // CPI is optional in v1.0; required in v1.1 but tolerated as absent for legacy data.
         if (isset($data['cognitive_performance_index'])) {
             $this->validate_cpi($data['cognitive_performance_index'], $errors, $warnings);
         }
 
-        // Step 7 — coerce numeric strings to numbers throughout.
-        // The LLM sometimes returns scores as strings ("75") rather than
-        // integers (75). We coerce silently and log a warning.
-        $data = $this->coerce_numerics($data, $warnings);
+        $data = $this->coerce_numerics_v1($data, $warnings);
 
         if (!empty($errors)) {
             return validation_result::fatal($errors, $warnings, validation_result::REASON_INVALID_STRUCTURE);
@@ -300,15 +343,57 @@ class schema_validator {
     }
 
     // -------------------------------------------------------------------------
-    // Private — sub-object validators
+    // v1.2 validation path
+    // -------------------------------------------------------------------------
+
+    /**
+     * Validate a decoded v1.2 JSON object (forum discussion analyzer output).
+     *
+     * @param  array  $data
+     * @param  array  $errors
+     * @param  array  $warnings
+     * @return validation_result
+     */
+    private function validate_v12(array $data, array $errors, array $warnings): validation_result {
+
+        // Required root keys.
+        foreach (self::REQUIRED_ROOT_KEYS_V12 as $key) {
+            if (!array_key_exists($key, $data) || $data[$key] === null) {
+                $errors[] = "Missing required root key: {$key}";
+            }
+        }
+
+        if (!empty($errors)) {
+            return validation_result::fatal($errors, $warnings, validation_result::REASON_MISSING_KEYS);
+        }
+
+        // Sub-object validation.
+        $this->validate_session($data['session'], $errors, $warnings);
+        $this->validate_scores_v12($data['scores'], $errors, $warnings);
+        $this->validate_competencies($data['competencies'], $errors, $warnings);
+        $this->validate_radar($data['radar'], $errors, $warnings);
+        $this->validate_blooms_progression($data['blooms_progression'], $errors, $warnings);
+        $this->validate_discussion_value($data['discussion_value'], $errors, $warnings);
+        $this->validate_cpi($data['cognitive_performance_index'], $errors, $warnings);
+        $this->validate_timeline($data['timeline'], $warnings);
+        $this->validate_instructor_notes($data['instructor_notes'], $warnings);
+        $this->validate_meta($data['meta'], $warnings);
+
+        $data = $this->coerce_numerics_v12($data, $warnings);
+
+        if (!empty($errors)) {
+            return validation_result::fatal($errors, $warnings, validation_result::REASON_INVALID_STRUCTURE);
+        }
+
+        return validation_result::ok($data, $warnings);
+    }
+
+    // -------------------------------------------------------------------------
+    // Shared sub-object validators
     // -------------------------------------------------------------------------
 
     /**
      * Validate the session object.
-     *
-     * @param mixed $session
-     * @param array &$errors
-     * @param array &$warnings
      */
     private function validate_session($session, array &$errors, array &$warnings): void {
         if (!is_array($session)) {
@@ -322,37 +407,53 @@ class schema_validator {
             }
         }
 
-        // tags must be an array.
         if (isset($session['tags']) && !is_array($session['tags'])) {
             $warnings[] = 'session.tags should be an array; received ' . gettype($session['tags']);
         }
 
-        // date should be ISO 8601.
         if (!empty($session['date']) && !$this->is_iso8601_date($session['date'])) {
             $warnings[] = 'session.date does not appear to be a valid ISO 8601 date: ' . $session['date'];
         }
     }
 
     /**
-     * Validate the scores object.
-     *
-     * @param mixed $scores
-     * @param array &$errors
-     * @param array &$warnings
+     * Validate the scores object for v1.0/v1.1.
      */
-    private function validate_scores($scores, array &$errors, array &$warnings): void {
+    private function validate_scores_v1($scores, array &$errors, array &$warnings): void {
         if (!is_array($scores)) {
             $errors[] = 'scores must be an object.';
             return;
         }
 
-        foreach (self::REQUIRED_SCORES_KEYS as $key) {
+        foreach (self::REQUIRED_SCORES_KEYS_V1 as $key) {
             if (!array_key_exists($key, $scores)) {
                 $errors[] = "Missing required scores key: {$key}";
                 continue;
             }
             $val = $scores[$key];
-            // Allow numeric strings — they will be coerced later.
+            if (!is_numeric($val)) {
+                $warnings[] = "scores.{$key} should be numeric; received: " . gettype($val);
+            } elseif ((float)$val < 0 || (float)$val > 100) {
+                $warnings[] = "scores.{$key} is out of range 0–100: {$val} (will be clamped on render)";
+            }
+        }
+    }
+
+    /**
+     * Validate the scores object for v1.2.
+     */
+    private function validate_scores_v12($scores, array &$errors, array &$warnings): void {
+        if (!is_array($scores)) {
+            $errors[] = 'scores must be an object.';
+            return;
+        }
+
+        foreach (self::REQUIRED_SCORES_KEYS_V12 as $key) {
+            if (!array_key_exists($key, $scores)) {
+                $errors[] = "Missing required scores key: {$key}";
+                continue;
+            }
+            $val = $scores[$key];
             if (!is_numeric($val)) {
                 $warnings[] = "scores.{$key} should be numeric; received: " . gettype($val);
             } elseif ((float)$val < 0 || (float)$val > 100) {
@@ -363,10 +464,6 @@ class schema_validator {
 
     /**
      * Validate the competencies array.
-     *
-     * @param mixed $competencies
-     * @param array &$errors
-     * @param array &$warnings
      */
     private function validate_competencies($competencies, array &$errors, array &$warnings): void {
         if (!is_array($competencies)) {
@@ -375,8 +472,6 @@ class schema_validator {
         }
 
         if (empty($competencies)) {
-            // An empty competencies array means the LLM found nothing to analyse.
-            // This is a fatal error — the dashboard cannot render without at least one.
             $errors[] = 'competencies array is empty; at least one competency is required.';
             return;
         }
@@ -394,20 +489,16 @@ class schema_validator {
                 }
             }
 
-            // score range.
             if (isset($comp['score']) && is_numeric($comp['score'])) {
                 if ((float)$comp['score'] < 0 || (float)$comp['score'] > 100) {
                     $warnings[] = "{$prefix}.score is out of range 0–100: {$comp['score']}";
                 }
             }
 
-            // color value.
             if (isset($comp['color']) && !in_array($comp['color'], self::VALID_COLORS, true)) {
-                $warnings[] = "{$prefix}.color '{$comp['color']}' is not a recognised value; expected: " .
-                    implode(', ', self::VALID_COLORS);
+                $warnings[] = "{$prefix}.color '{$comp['color']}' is not a recognised value.";
             }
 
-            // bloom_level range.
             if (isset($comp['bloom_level'])) {
                 $level = (int) $comp['bloom_level'];
                 if ($level < 1 || $level > 6) {
@@ -415,7 +506,6 @@ class schema_validator {
                 }
             }
 
-            // bloom_label consistency with bloom_level.
             if (isset($comp['bloom_level'], $comp['bloom_label'])) {
                 $level    = (int) $comp['bloom_level'];
                 $expected = self::BLOOMS_LEVEL_MAP[$level] ?? null;
@@ -429,10 +519,6 @@ class schema_validator {
 
     /**
      * Validate the radar object.
-     *
-     * @param mixed $radar
-     * @param array &$errors
-     * @param array &$warnings
      */
     private function validate_radar($radar, array &$errors, array &$warnings): void {
         if (!is_array($radar) || !isset($radar['axes']) || !is_array($radar['axes'])) {
@@ -464,10 +550,6 @@ class schema_validator {
 
     /**
      * Validate the blooms_progression array.
-     *
-     * @param mixed $blooms
-     * @param array &$errors
-     * @param array &$warnings
      */
     private function validate_blooms_progression($blooms, array &$errors, array &$warnings): void {
         if (!is_array($blooms)) {
@@ -493,7 +575,6 @@ class schema_validator {
                 }
             }
 
-            // level range.
             if (isset($entry['level'])) {
                 $level = (int) $entry['level'];
                 if ($level < 1 || $level > 6) {
@@ -501,7 +582,6 @@ class schema_validator {
                 }
             }
 
-            // dots_active range.
             if (isset($entry['dots_active'])) {
                 $dots = (int) $entry['dots_active'];
                 if ($dots < 0 || $dots > 5) {
@@ -509,7 +589,6 @@ class schema_validator {
                 }
             }
 
-            // dot_color value.
             if (isset($entry['dot_color']) && !in_array($entry['dot_color'], self::VALID_DOT_COLORS, true)) {
                 $warnings[] = "{$prefix}.dot_color '{$entry['dot_color']}' is not a recognised value.";
             }
@@ -517,11 +596,7 @@ class schema_validator {
     }
 
     /**
-     * Validate the roi object.
-     *
-     * @param mixed $roi
-     * @param array &$errors
-     * @param array &$warnings
+     * Validate the roi object (v1.0/v1.1 only).
      */
     private function validate_roi($roi, array &$errors, array &$warnings): void {
         if (!is_array($roi)) {
@@ -535,14 +610,12 @@ class schema_validator {
             }
         }
 
-        // application_readiness enum.
         if (isset($roi['application_readiness']) &&
             !in_array($roi['application_readiness'], self::VALID_READINESS, true)) {
             $warnings[] = "roi.application_readiness '{$roi['application_readiness']}' is not a " .
                 "recognised value; expected: " . implode(', ', self::VALID_READINESS);
         }
 
-        // employer_value_index range.
         if (isset($roi['employer_value_index']) && is_numeric($roi['employer_value_index'])) {
             $val = (float) $roi['employer_value_index'];
             if ($val < 0.0 || $val > 10.0) {
@@ -550,7 +623,6 @@ class schema_validator {
             }
         }
 
-        // Numeric fields.
         foreach (['knowledge_value_usd', 'time_efficiency_multiplier', 'engagement_score',
                   'retention_probability_pct', 'lms_equivalent_hours', 'session_hours'] as $key) {
             if (isset($roi[$key]) && !is_numeric($roi[$key])) {
@@ -560,10 +632,150 @@ class schema_validator {
     }
 
     /**
-     * Validate the timeline array (warnings only — optional content).
-     *
-     * @param mixed $timeline
-     * @param array &$warnings
+     * Validate the discussion_value object (v1.2 only).
+     */
+    private function validate_discussion_value($dv, array &$errors, array &$warnings): void {
+        if (!is_array($dv)) {
+            $errors[] = 'discussion_value must be an object.';
+            return;
+        }
+
+        foreach (self::REQUIRED_DISCUSSION_VALUE_KEYS as $key) {
+            if (!array_key_exists($key, $dv) || $dv[$key] === null) {
+                $errors[] = "Missing required discussion_value key: {$key}";
+            }
+        }
+
+        if (isset($dv['application_readiness']) &&
+            !in_array($dv['application_readiness'], self::VALID_READINESS, true)) {
+            $warnings[] = "discussion_value.application_readiness '{$dv['application_readiness']}' " .
+                "is not a recognised value.";
+        }
+
+        if (isset($dv['participation_depth']) &&
+            !in_array($dv['participation_depth'], self::VALID_DEPTH, true)) {
+            $warnings[] = "discussion_value.participation_depth '{$dv['participation_depth']}' " .
+                "is not a recognised value; expected: LOW, MEDIUM, HIGH.";
+        }
+
+        if (isset($dv['discussion_contribution_index']) && is_numeric($dv['discussion_contribution_index'])) {
+            $val = (float) $dv['discussion_contribution_index'];
+            if ($val < 0.0 || $val > 10.0) {
+                $warnings[] = "discussion_value.discussion_contribution_index {$val} is out of range 0.0–10.0.";
+            }
+        }
+
+        // dci_components.
+        if (isset($dv['dci_components'])) {
+            if (!is_array($dv['dci_components'])) {
+                $errors[] = 'discussion_value.dci_components must be an object.';
+            } else {
+                foreach (self::REQUIRED_DCI_COMPONENT_KEYS as $key) {
+                    if (!array_key_exists($key, $dv['dci_components'])) {
+                        $errors[] = "Missing required dci_components key: {$key}";
+                    } elseif (is_numeric($dv['dci_components'][$key])) {
+                        $val = (float) $dv['dci_components'][$key];
+                        if ($val < 0.0 || $val > 2.0) {
+                            $warnings[] = "dci_components.{$key} {$val} is out of range 0.0–2.0.";
+                        }
+                    }
+                }
+            }
+        }
+
+        // retention_indicators.
+        if (isset($dv['retention_indicators'])) {
+            if (!is_array($dv['retention_indicators'])) {
+                $warnings[] = 'discussion_value.retention_indicators should be an object.';
+            } else {
+                if (!isset($dv['retention_indicators']['factors_present']) ||
+                    !is_array($dv['retention_indicators']['factors_present'])) {
+                    $warnings[] = 'discussion_value.retention_indicators.factors_present should be an array.';
+                }
+                if (!isset($dv['retention_indicators']['factors_absent']) ||
+                    !is_array($dv['retention_indicators']['factors_absent'])) {
+                    $warnings[] = 'discussion_value.retention_indicators.factors_absent should be an array.';
+                }
+            }
+        }
+    }
+
+    /**
+     * Validate the instructor_notes object (v1.2 only).
+     */
+    private function validate_instructor_notes($notes, array &$warnings): void {
+        if (!is_array($notes)) {
+            $warnings[] = 'instructor_notes should be an object.';
+            return;
+        }
+
+        foreach (self::REQUIRED_INSTRUCTOR_NOTES_KEYS as $key) {
+            if (empty($notes[$key])) {
+                $warnings[] = "instructor_notes.{$key} is missing or empty.";
+            }
+        }
+
+        if (isset($notes['standout_moments']) && is_array($notes['standout_moments'])) {
+            foreach ($notes['standout_moments'] as $i => $moment) {
+                if (!is_array($moment) || empty($moment['observation'])) {
+                    $warnings[] = "instructor_notes.standout_moments[{$i}] is missing observation.";
+                }
+                if (isset($moment['type']) &&
+                    !in_array($moment['type'], ['Strength', 'Growth Opportunity'], true)) {
+                    $warnings[] = "instructor_notes.standout_moments[{$i}].type should be " .
+                        "'Strength' or 'Growth Opportunity'.";
+                }
+            }
+        }
+    }
+
+    /**
+     * Validate the cognitive_performance_index object.
+     */
+    private function validate_cpi($cpi, array &$errors, array &$warnings): void {
+        if (!is_array($cpi)) {
+            $errors[] = 'cognitive_performance_index must be an object.';
+            return;
+        }
+
+        foreach (self::REQUIRED_CPI_KEYS as $key) {
+            if (!array_key_exists($key, $cpi) || $cpi[$key] === null || $cpi[$key] === '') {
+                $errors[] = "Missing required cognitive_performance_index key: {$key}";
+            }
+        }
+
+        if (isset($cpi['cpi_score'])) {
+            $score = (int) $cpi['cpi_score'];
+            if ($score < 70 || $score > 145) {
+                $warnings[] = "cognitive_performance_index.cpi_score {$score} is out of range 70–145.";
+            }
+        }
+
+        if (isset($cpi['cpi_band']) && !in_array($cpi['cpi_band'], self::VALID_CPI_BANDS, true)) {
+            $warnings[] = "cognitive_performance_index.cpi_band '{$cpi['cpi_band']}' " .
+                "is not a recognised value.";
+        }
+
+        if (isset($cpi['component_scores']) && is_array($cpi['component_scores'])) {
+            foreach ($cpi['component_scores'] as $field => $val) {
+                if (is_numeric($val) && ((float)$val < 0 || (float)$val > 100)) {
+                    $warnings[] = "cognitive_performance_index.component_scores.{$field} " .
+                        "is out of range 0–100: {$val}";
+                }
+            }
+        }
+
+        if (!empty($cpi['calculation_note'])) {
+            $required = 'Not a measure of general intelligence';
+            if (strpos($cpi['calculation_note'], $required) === false) {
+                $warnings[] = 'cognitive_performance_index.calculation_note is missing the ' .
+                    'required disclaimer about general intelligence.';
+            }
+        }
+    }
+
+    /**
+     * Validate the timeline array.
      */
     private function validate_timeline($timeline, array &$warnings): void {
         if (!is_array($timeline)) {
@@ -578,10 +790,7 @@ class schema_validator {
     }
 
     /**
-     * Validate the employer_value array (warnings only — optional content).
-     *
-     * @param mixed $employervalue
-     * @param array &$warnings
+     * Validate the employer_value array (v1.0/v1.1 only).
      */
     private function validate_employer_value($employervalue, array &$warnings): void {
         if (!is_array($employervalue)) {
@@ -596,10 +805,7 @@ class schema_validator {
     }
 
     /**
-     * Validate the portfolio object (warnings only — optional content).
-     *
-     * @param mixed $portfolio
-     * @param array &$warnings
+     * Validate the portfolio object (v1.0/v1.1 only).
      */
     private function validate_portfolio($portfolio, array &$warnings): void {
         if (!is_array($portfolio)) {
@@ -612,10 +818,7 @@ class schema_validator {
     }
 
     /**
-     * Validate the meta object (warnings only).
-     *
-     * @param mixed $meta
-     * @param array &$warnings
+     * Validate the meta object.
      */
     private function validate_meta($meta, array &$warnings): void {
         if (!is_array($meta)) {
@@ -631,161 +834,18 @@ class schema_validator {
         }
     }
 
-    /**
-     * Validate the cognitive_performance_index object (v1.1+).
-     *
-     * Required keys are fatal when CPI is present — if the LLM produced the
-     * object at all, it should be complete. Missing CPI entirely (v1.0 data)
-     * is fine; a partial CPI is an error.
-     *
-     * @param mixed $cpi
-     * @param array &$errors
-     * @param array &$warnings
-     */
-    private function validate_cpi($cpi, array &$errors, array &$warnings): void {
-        if (!is_array($cpi)) {
-            $errors[] = 'cognitive_performance_index must be an object.';
-            return;
-        }
-
-        // Required scalar fields.
-        foreach (self::REQUIRED_CPI_KEYS as $key) {
-            if (!array_key_exists($key, $cpi) || $cpi[$key] === null || $cpi[$key] === '') {
-                $errors[] = "Missing required cognitive_performance_index key: {$key}";
-            }
-        }
-
-        // cpi_score range 70–145.
-        if (isset($cpi['cpi_score'])) {
-            $score = (int) $cpi['cpi_score'];
-            if ($score < 70 || $score > 145) {
-                $warnings[] = "cognitive_performance_index.cpi_score {$score} is out of range 70–145.";
-            }
-        }
-
-        // cpi_band enum.
-        if (isset($cpi['cpi_band']) &&
-            !in_array($cpi['cpi_band'], self::VALID_CPI_BANDS, true)) {
-            $warnings[] = "cognitive_performance_index.cpi_band '{$cpi['cpi_band']}' " .
-                "is not a recognised value. Expected: " . implode(', ', self::VALID_CPI_BANDS);
-        }
-
-        // component_scores — all values should be 0–100.
-        if (isset($cpi['component_scores']) && is_array($cpi['component_scores'])) {
-            foreach ($cpi['component_scores'] as $field => $val) {
-                if (is_numeric($val) && ((float)$val < 0 || (float)$val > 100)) {
-                    $warnings[] = "cognitive_performance_index.component_scores.{$field} " .
-                        "is out of range 0–100: {$val}";
-                }
-            }
-        }
-
-        // calculation_note must contain the required disclaimer.
-        if (!empty($cpi['calculation_note'])) {
-            $required = 'Not a measure of general intelligence';
-            if (strpos($cpi['calculation_note'], $required) === false) {
-                $warnings[] = 'cognitive_performance_index.calculation_note is missing the ' .
-                    'required disclaimer about general intelligence.';
-            }
-        }
-    }
-
     // -------------------------------------------------------------------------
-    // Private — helpers
+    // Numeric coercion — v1.0/v1.1
     // -------------------------------------------------------------------------
 
     /**
-     * Strip markdown code fences that the LLM may have wrapped around the JSON
-     * despite instructions to the contrary.
-     *
-     * Handles:
-     *   ```json\n{...}\n```
-     *   ```\n{...}\n```
-     *   `{...}`
-     *
-     * @param  string $raw
-     * @return string Cleaned string.
+     * Coerce numeric string values to correct PHP types for v1.0/v1.1 data.
      */
-    private function strip_fences(string $raw): string {
-        $trimmed = trim($raw);
-
-        // Multi-line code fence with optional language tag.
-        if (preg_match('/^```(?:json)?\s*\n?([\s\S]*?)\n?```$/s', $trimmed, $matches)) {
-            return trim($matches[1]);
-        }
-
-        // Single backtick wrapping.
-        if (preg_match('/^`([\s\S]*)`$/s', $trimmed, $matches)) {
-            return trim($matches[1]);
-        }
-
-        return $trimmed;
-    }
-
-    /**
-     * Detect a truncated JSON response.
-     *
-     * A response is considered truncated if it starts with '{' but does not
-     * end with '}' after trimming whitespace. This is the signature of a
-     * response that hit the max_tokens limit mid-generation.
-     *
-     * Also catches the case where the LLM started generating but produced
-     * clearly incomplete JSON (e.g. ends with a comma or a partial string).
-     *
-     * @param  string $text
-     * @return bool
-     */
-    private function is_truncated(string $text): bool {
-        $trimmed = trim($text);
-
-        if (empty($trimmed)) {
-            return false; // Empty string is invalid JSON, not truncated.
-        }
-
-        if ($trimmed[0] !== '{') {
-            return false; // Does not look like a JSON object at all.
-        }
-
-        $last = substr($trimmed, -1);
-
-        // Definitively truncated if it doesn't end with '}'.
-        if ($last !== '}') {
-            return true;
-        }
-
-        // Secondary check: attempt decode and see if json_last_error indicates
-        // a syntax error that could be caused by truncation mid-string.
-        json_decode($trimmed);
-        if (json_last_error() === JSON_ERROR_CTRL_CHAR ||
-            json_last_error() === JSON_ERROR_SYNTAX) {
-            return true;
-        }
-
-        return false;
-    }
-
-    /**
-     * Coerce numeric string values to their proper PHP types throughout the
-     * decoded data array.
-     *
-     * The LLM frequently returns scores as strings ("75") instead of integers
-     * (75). This is a schema violation but not a fatal one. We coerce silently
-     * and add a single summary warning rather than one warning per field.
-     *
-     * Operates on: scores.*, roi.* (numeric fields), competencies[*].score,
-     * competencies[*].bloom_level, radar.axes[*].value,
-     * blooms_progression[*].level, blooms_progression[*].dots_active.
-     *
-     * @param  array  $data     Decoded JSON data.
-     * @param  array  &$warnings
-     * @return array            Data with numerics coerced.
-     */
-    private function coerce_numerics(array $data, array &$warnings): array {
+    private function coerce_numerics_v1(array $data, array &$warnings): array {
         $coerced = false;
 
-        // scores.*
         if (isset($data['scores']) && is_array($data['scores'])) {
-            foreach (self::REQUIRED_SCORES_KEYS as $key) {
+            foreach (self::REQUIRED_SCORES_KEYS_V1 as $key) {
                 if (isset($data['scores'][$key]) && is_string($data['scores'][$key]) &&
                     is_numeric($data['scores'][$key])) {
                     $data['scores'][$key] = (int) $data['scores'][$key];
@@ -794,7 +854,6 @@ class schema_validator {
             }
         }
 
-        // roi.* numeric fields.
         $roinumeric = [
             'knowledge_value_usd'        => 'int',
             'time_efficiency_multiplier' => 'float',
@@ -815,6 +874,84 @@ class schema_validator {
                 }
             }
         }
+
+        $data = $this->coerce_shared_numerics($data, $coerced);
+
+        if ($coerced) {
+            $warnings[] = 'One or more numeric fields were returned as strings by the LLM and have been coerced.';
+        }
+
+        return $data;
+    }
+
+    // -------------------------------------------------------------------------
+    // Numeric coercion — v1.2
+    // -------------------------------------------------------------------------
+
+    /**
+     * Coerce numeric string values to correct PHP types for v1.2 data.
+     */
+    private function coerce_numerics_v12(array $data, array &$warnings): array {
+        $coerced = false;
+
+        if (isset($data['scores']) && is_array($data['scores'])) {
+            foreach (self::REQUIRED_SCORES_KEYS_V12 as $key) {
+                if (isset($data['scores'][$key]) && is_string($data['scores'][$key]) &&
+                    is_numeric($data['scores'][$key])) {
+                    $data['scores'][$key] = (int) $data['scores'][$key];
+                    $coerced = true;
+                }
+            }
+        }
+
+        // discussion_value numerics.
+        if (isset($data['discussion_value']) && is_array($data['discussion_value'])) {
+            $dv = &$data['discussion_value'];
+
+            if (isset($dv['session_hours']) && is_string($dv['session_hours']) &&
+                is_numeric($dv['session_hours'])) {
+                $dv['session_hours'] = (float) $dv['session_hours'];
+                $coerced = true;
+            }
+
+            if (isset($dv['discussion_contribution_index']) &&
+                is_string($dv['discussion_contribution_index']) &&
+                is_numeric($dv['discussion_contribution_index'])) {
+                $dv['discussion_contribution_index'] = (float) $dv['discussion_contribution_index'];
+                $coerced = true;
+            }
+
+            if (isset($dv['dci_components']) && is_array($dv['dci_components'])) {
+                foreach (self::REQUIRED_DCI_COMPONENT_KEYS as $key) {
+                    if (isset($dv['dci_components'][$key]) &&
+                        is_string($dv['dci_components'][$key]) &&
+                        is_numeric($dv['dci_components'][$key])) {
+                        $dv['dci_components'][$key] = (float) $dv['dci_components'][$key];
+                        $coerced = true;
+                    }
+                }
+            }
+
+            unset($dv);
+        }
+
+        $data = $this->coerce_shared_numerics($data, $coerced);
+
+        if ($coerced) {
+            $warnings[] = 'One or more numeric fields were returned as strings by the LLM and have been coerced.';
+        }
+
+        return $data;
+    }
+
+    // -------------------------------------------------------------------------
+    // Shared numeric coercion (competencies, radar, blooms, CPI)
+    // -------------------------------------------------------------------------
+
+    /**
+     * Coerce numeric strings in sections shared across all schema versions.
+     */
+    private function coerce_shared_numerics(array $data, bool &$coerced): array {
 
         // competencies[*].score and bloom_level.
         if (isset($data['competencies']) && is_array($data['competencies'])) {
@@ -860,30 +997,25 @@ class schema_validator {
             unset($entry);
         }
 
-        if ($coerced) {
-            $warnings[] = 'One or more numeric fields were returned as strings by the LLM and have been coerced to their correct types.';
-        }
-
-        // cognitive_performance_index numeric fields (v1.1+).
+        // cognitive_performance_index numeric fields.
         if (isset($data['cognitive_performance_index']) &&
             is_array($data['cognitive_performance_index'])) {
             $cpi = &$data['cognitive_performance_index'];
 
-            // cpi_score — integer.
             if (isset($cpi['cpi_score']) && is_string($cpi['cpi_score']) &&
                 is_numeric($cpi['cpi_score'])) {
                 $cpi['cpi_score'] = (int) $cpi['cpi_score'];
+                $coerced = true;
             }
-            // Clamp to valid range.
             if (isset($cpi['cpi_score'])) {
                 $cpi['cpi_score'] = max(70, min(145, (int) $cpi['cpi_score']));
             }
 
-            // component_scores — all integers.
             if (isset($cpi['component_scores']) && is_array($cpi['component_scores'])) {
                 foreach ($cpi['component_scores'] as $field => $val) {
                     if (is_string($val) && is_numeric($val)) {
                         $cpi['component_scores'][$field] = (int) $val;
+                        $coerced = true;
                     }
                 }
             }
@@ -894,14 +1026,58 @@ class schema_validator {
         return $data;
     }
 
+    // -------------------------------------------------------------------------
+    // Helpers
+    // -------------------------------------------------------------------------
+
+    /**
+     * Strip markdown code fences the LLM may have added.
+     */
+    private function strip_fences(string $raw): string {
+        $trimmed = trim($raw);
+
+        if (preg_match('/^```(?:json)?\s*\n?([\s\S]*?)\n?```$/s', $trimmed, $matches)) {
+            return trim($matches[1]);
+        }
+
+        if (preg_match('/^`([\s\S]*)`$/s', $trimmed, $matches)) {
+            return trim($matches[1]);
+        }
+
+        return $trimmed;
+    }
+
+    /**
+     * Detect a truncated JSON response.
+     */
+    private function is_truncated(string $text): bool {
+        $trimmed = trim($text);
+
+        if (empty($trimmed)) {
+            return false;
+        }
+
+        if ($trimmed[0] !== '{') {
+            return false;
+        }
+
+        $last = substr($trimmed, -1);
+
+        if ($last !== '}') {
+            return true;
+        }
+
+        json_decode($trimmed);
+        if (json_last_error() === JSON_ERROR_CTRL_CHAR ||
+            json_last_error() === JSON_ERROR_SYNTAX) {
+            return true;
+        }
+
+        return false;
+    }
+
     /**
      * Check whether a string is a plausible ISO 8601 date or datetime.
-     *
-     * Accepts YYYY-MM-DD and YYYY-MM-DDTHH:MM:SSZ formats. Not exhaustive —
-     * just catches obviously wrong values like plain text.
-     *
-     * @param  string $value
-     * @return bool
      */
     private function is_iso8601_date(string $value): bool {
         return (bool) preg_match(
@@ -914,37 +1090,21 @@ class schema_validator {
 
 /**
  * Value object returned by schema_validator::validate().
- *
- * Callers check is_valid() first, then use get_data() or get_errors()
- * accordingly. Warnings are always available regardless of validity.
  */
 class validation_result {
 
-    /** Reason codes for fatal validation failures. */
     const REASON_TRUNCATED         = 'truncated';
     const REASON_INVALID_JSON      = 'invalid_json';
     const REASON_SCHEMA_MISMATCH   = 'schema_mismatch';
     const REASON_MISSING_KEYS      = 'missing_keys';
     const REASON_INVALID_STRUCTURE = 'invalid_structure';
 
-    /** @var bool */
     private bool $valid;
-
-    /** @var array|null Decoded, coerced data array. Null if not valid. */
     private ?array $data;
-
-    /** @var string[] Fatal error messages. */
     private array $errors;
-
-    /** @var string[] Non-fatal warning messages. */
     private array $warnings;
-
-    /** @var string|null Reason code for fatal failures. */
     private ?string $reason;
 
-    /**
-     * Private constructor — use static factories.
-     */
     private function __construct(
         bool $valid,
         ?array $data,
@@ -959,74 +1119,38 @@ class validation_result {
         $this->reason   = $reason;
     }
 
-    /**
-     * Create a successful validation result.
-     *
-     * @param array  $data     Validated, coerced data.
-     * @param array  $warnings Non-fatal warnings.
-     * @return self
-     */
     public static function ok(array $data, array $warnings = []): self {
         return new self(true, $data, [], $warnings, null);
     }
 
-    /**
-     * Create a fatal validation result.
-     *
-     * @param array  $errors   Fatal error messages.
-     * @param array  $warnings Non-fatal warnings accumulated before failure.
-     * @param string $reason   One of the REASON_* constants.
-     * @return self
-     */
     public static function fatal(array $errors, array $warnings = [], string $reason = self::REASON_INVALID_JSON): self {
         return new self(false, null, $errors, $warnings, $reason);
     }
 
-    /** @return bool */
     public function is_valid(): bool {
         return $this->valid;
     }
 
-    /**
-     * Return the validated data array.
-     * Only meaningful when is_valid() === true.
-     *
-     * @return array|null
-     */
     public function get_data(): ?array {
         return $this->data;
     }
 
-    /** @return string[] */
     public function get_errors(): array {
         return $this->errors;
     }
 
-    /** @return string[] */
     public function get_warnings(): array {
         return $this->warnings;
     }
 
-    /** @return string|null */
     public function get_reason(): ?string {
         return $this->reason;
     }
 
-    /**
-     * Return true if the failure was caused by response truncation.
-     * Used by session_analyser to decide whether to retry with higher max_tokens.
-     *
-     * @return bool
-     */
     public function is_truncated(): bool {
         return $this->reason === self::REASON_TRUNCATED;
     }
 
-    /**
-     * Return a single string summarising all errors, for logging.
-     *
-     * @return string
-     */
     public function get_error_summary(): string {
         return implode('; ', $this->errors);
     }
