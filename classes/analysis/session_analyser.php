@@ -80,10 +80,60 @@ class session_analyser {
         $this->validator = new schema_validator();
     }
 
+    // -------------------------------------------------------------------------
+    // Public API — called by process_queue.php for student_forum/thread scopes
+    // -------------------------------------------------------------------------
+
+    /**
+     * Send a prompt to the LLM and return the raw response string.
+     *
+     * Used by process_queue.php's process_analysis_row() for student_forum
+     * and thread scopes, which manage their own prompt-build and storage
+     * logic rather than going through process_queue_item().
+     *
+     * @param  string $prompt  The fully assembled prompt string.
+     * @return string          Raw LLM response text.
+     * @throws \local_lid\exception\llm_request_exception  On API failure.
+     */
+    public function call_llm(string $prompt): string {
+        return $this->client->complete($prompt);
+    }
+
+    /**
+     * Validate a raw LLM JSON response string.
+     *
+     * Returns the decoded data array on success, or null if validation fails.
+     * Used by process_queue.php alongside call_llm() for scopes that manage
+     * their own pipeline.
+     *
+     * @param  string     $rawjson  Raw JSON string returned by the LLM.
+     * @return array|null           Decoded data on success; null on failure.
+     */
+    public function validate_json(string $rawjson): ?array {
+        $result = $this->validator->validate($rawjson);
+        return $result->is_valid() ? $result->get_data() : null;
+    }
+
+    /**
+     * Return the model identifier string used in the most recent LLM call.
+     *
+     * Used by process_queue.php to record llm_model on the analysis row.
+     *
+     * @return string  Model identifier (e.g. 'gemini-2.5-flash').
+     */
+    public function get_last_model_used(): string {
+        return $this->client->get_model();
+    }
+
+    // -------------------------------------------------------------------------
+    // Public API — called by process_queue.php (legacy post scope) and ajax.php
+    // -------------------------------------------------------------------------
+
     /**
      * Process a single queue item end-to-end.
      *
-     * This is the main entry point called by process_queue.php.
+     * This is the main entry point called by process_queue.php for post-scope
+     * items and by ajax.php for manual re-analysis triggers.
      * Handles all exceptions internally — never throws to the caller.
      * Returns true if the analysis completed successfully, false otherwise.
      *
