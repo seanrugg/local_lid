@@ -349,3 +349,13 @@ $string['forum_lid_saved']                     = 'Forum LID setting saved.';
 $string['lid_hidden_force_disabled']           = 'Learning Intelligence analysis is currently disabled by the site administrator. Existing data is preserved and will reappear when analysis is re-enabled.';
 $string['lid_hidden_course_disabled']          = 'Learning Intelligence analysis is currently disabled for this course. Existing data is preserved and will reappear if re-enabled.';
 $string['lid_hidden_forum_disabled']           = 'Learning Intelligence analysis is disabled for this forum. Enable it in the forum settings to view the dashboard.';
+
+// ---------------------------------------------------------------------------
+// Message provider labels
+// Required by Moodle's messaging system — displayed in each user's
+// notification preferences UI (Profile → Preferences → Notification preferences).
+// Key format must be exactly: messageprovider:<providername>
+// where <providername> matches the key defined in db/messages.php.
+// ---------------------------------------------------------------------------
+
+$string['messageprovider:analysis_complete'] = 'LID analysis completion notifications';
