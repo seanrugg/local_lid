@@ -17,6 +17,11 @@
 /**
  * LLM API client for local_lid.
  *
+ * Supports three provider shapes auto-detected from the endpoint URL:
+ *   - Anthropic Messages API  (api.anthropic.com)
+ *   - Google Gemini API       (generativelanguage.googleapis.com)
+ *   - OpenAI-compatible API   (everything else, including Ollama)
+ *
  * @package    local_lid
  * @copyright  2026 Learning Intelligence Dashboard Project Contributors
  * @license    https://www.gnu.org/licenses/gpl-3.0.html GNU GPL v3 or later
@@ -29,61 +34,43 @@ defined('MOODLE_INTERNAL') || die();
 /**
  * HTTP client that sends prompts to the configured LLM API endpoint and
  * returns the raw text response.
- *
- * Designed to be provider-agnostic. The request body follows the Anthropic
- * Messages API format by default. Providers using an OpenAI-compatible
- * endpoint will work without modification because both use the same
- * { model, max_tokens, messages: [{role, content}] } structure.
- *
- * Usage:
- *   $client   = new \local_lid\llm\client();
- *   $response = $client->complete($prompttext);
- *   // $response is a raw string (expected to be JSON from the LLM).
- *
- * Exceptions:
- *   \local_lid\exception\llm_request_exception  — HTTP or cURL error.
- *   \local_lid\exception\llm_response_exception — Unexpected response structure.
  */
 class client {
 
-    /** @var string LLM API endpoint URL. */
+    /** Provider constants. */
+    const PROVIDER_ANTHROPIC = 'anthropic';
+    const PROVIDER_GEMINI    = 'gemini';
+    const PROVIDER_OPENAI    = 'openai';
+
+    /** @var string API endpoint URL. */
     private string $endpoint;
 
-    /** @var string API key (decrypted at construction time). */
+    /** @var string API key. */
     private string $apikey;
 
-    /** @var string Model identifier string. */
+    /** @var string Model identifier. */
     private string $model;
 
-    /** @var int Maximum tokens to request. */
+    /** @var int Max tokens for completion. */
     private int $maxtokens;
 
-    /** @var int HTTP request timeout in seconds. */
+    /** @var int cURL timeout in seconds. */
     private int $timeout;
 
+    /** @var string Detected provider. */
+    private string $provider;
+
     /**
-     * Constructor — loads configuration from Moodle config_plugins or from
-     * the local_lid_settings site-level row (courseid = 0).
+     * Constructor. Reads configuration and validates required settings.
      *
-     * Config resolution order:
-     *   1. local_lid_settings row (courseid = 0) — set by the admin settings page
-     *      and stored in the DB for the prompt and API details.
-     *   2. get_config('local_lid', ...) — fallback for values stored via the
-     *      standard Moodle config_plugins table (trigger flags, cron settings).
-     *
-     * For the API key, get_config() returns the value saved by the admin
-     * settings page. Moodle's admin_setting_configpasswordunmask stores the
-     * value as plain text in config_plugins — we rely on Moodle's own DB
-     * encryption at rest rather than adding a second layer here.
-     *
-     * @throws \local_lid\exception\llm_config_exception If required config is missing.
+     * @throws \local_lid\exception\llm_config_exception If endpoint or API key not set.
      */
     public function __construct() {
         $this->endpoint  = (string) get_config('local_lid', 'llm_endpoint');
         $this->apikey    = (string) get_config('local_lid', 'llm_apikey');
         $this->model     = (string) get_config('local_lid', 'llm_model');
         $this->maxtokens = (int)    get_config('local_lid', 'llm_maxtokens') ?: 4096;
-        $this->timeout   = (int)    get_config('local_lid', 'llm_timeout')   ?: 60;
+        $this->timeout   = 120;
 
         if (empty($this->endpoint)) {
             throw new \local_lid\exception\llm_config_exception(
@@ -98,18 +85,32 @@ class client {
         }
 
         if (empty($this->model)) {
-            $this->model = 'claude-sonnet-4-6';
+            $this->model = 'gemini-2.0-flash';
         }
+
+        $this->provider = $this->detect_provider($this->endpoint);
+    }
+
+    /**
+     * Detect which provider API format to use based on the endpoint URL.
+     *
+     * @param  string $endpoint
+     * @return string One of the PROVIDER_* constants.
+     */
+    private function detect_provider(string $endpoint): string {
+        if (strpos($endpoint, 'generativelanguage.googleapis.com') !== false) {
+            return self::PROVIDER_GEMINI;
+        }
+        if (strpos($endpoint, 'api.anthropic.com') !== false) {
+            return self::PROVIDER_ANTHROPIC;
+        }
+        return self::PROVIDER_OPENAI;
     }
 
     /**
      * Send a prompt to the LLM and return the text response.
      *
-     * The full prompt (assembled by prompt_builder) is sent as a single
-     * user message. The LLM is expected to return only a raw JSON object
-     * with no preamble — the prompt instructs it to do so.
-     *
-     * @param  string $prompt The complete assembled prompt including post content.
+     * @param  string $prompt The complete assembled prompt.
      * @return string         Raw text response from the LLM.
      *
      * @throws \local_lid\exception\llm_request_exception  On HTTP / cURL failure.
@@ -117,16 +118,7 @@ class client {
      */
     public function complete(string $prompt): string {
 
-        $body = json_encode([
-            'model'      => $this->model,
-            'max_tokens' => $this->maxtokens,
-            'messages'   => [
-                [
-                    'role'    => 'user',
-                    'content' => $prompt,
-                ],
-            ],
-        ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        $body = $this->build_request_body($prompt);
 
         if ($body === false) {
             throw new \local_lid\exception\llm_request_exception(
@@ -160,14 +152,57 @@ class client {
     }
 
     /**
+     * Build the JSON request body for the detected provider.
+     *
+     * @param  string $prompt
+     * @return string|false JSON-encoded body, or false on encode failure.
+     */
+    private function build_request_body(string $prompt) {
+
+        if ($this->provider === self::PROVIDER_GEMINI) {
+            // Gemini generateContent format.
+            $data = [
+                'contents' => [
+                    [
+                        'role'  => 'user',
+                        'parts' => [['text' => $prompt]],
+                    ],
+                ],
+                'generationConfig' => [
+                    'maxOutputTokens' => $this->maxtokens,
+                    'temperature'     => 0.2,
+                ],
+            ];
+        } else if ($this->provider === self::PROVIDER_ANTHROPIC) {
+            // Anthropic Messages API format.
+            $data = [
+                'model'      => $this->model,
+                'max_tokens' => $this->maxtokens,
+                'messages'   => [
+                    ['role' => 'user', 'content' => $prompt],
+                ],
+            ];
+        } else {
+            // OpenAI-compatible (Ollama, OpenAI, etc.).
+            $data = [
+                'model'      => $this->model,
+                'max_tokens' => $this->maxtokens,
+                'messages'   => [
+                    ['role' => 'user', 'content' => $prompt],
+                ],
+            ];
+        }
+
+        return json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    }
+
+    /**
      * Extract the text content from the LLM API response envelope.
      *
-     * Handles the Anthropic Messages API response shape:
-     *   { "content": [ { "type": "text", "text": "..." } ] }
-     *
-     * If the response does not match this shape (e.g. an OpenAI-compatible
-     * endpoint using { "choices": [ { "message": { "content": "..." } } ] }),
-     * falls back to the OpenAI shape before throwing.
+     * Handles three provider shapes:
+     *   Anthropic: { "content": [ { "type": "text", "text": "..." } ] }
+     *   Gemini:    { "candidates": [ { "content": { "parts": [ { "text": "..." } ] } } ] }
+     *   OpenAI:    { "choices": [ { "message": { "content": "..." } } ] }
      *
      * @param  string $rawresponse Raw JSON string from the API.
      * @return string              The extracted text content.
@@ -184,23 +219,50 @@ class client {
             );
         }
 
+        // API error object — check before provider shapes.
+        if (isset($decoded['error'])) {
+            $errormsg = $decoded['error']['message']
+                ?? (is_string($decoded['error']) ? $decoded['error'] : json_encode($decoded['error']));
+            throw new \local_lid\exception\llm_response_exception(
+                get_string('error_llm_request_failed', 'local_lid', $errormsg)
+            );
+        }
+
+        // Gemini generateContent response shape.
+        if (isset($decoded['candidates'][0]['content']['parts'][0]['text'])) {
+            $text = trim($decoded['candidates'][0]['content']['parts'][0]['text']);
+            if ($text !== '') {
+                return $text;
+            }
+        }
+
+        // Gemini safety block — finishReason = SAFETY or other non-STOP.
+        if (isset($decoded['candidates'][0]['finishReason'])
+            && $decoded['candidates'][0]['finishReason'] !== 'STOP'
+            && $decoded['candidates'][0]['finishReason'] !== 'MAX_TOKENS') {
+            $reason = $decoded['candidates'][0]['finishReason'];
+            throw new \local_lid\exception\llm_response_exception(
+                get_string('error_llm_request_failed', 'local_lid',
+                    "Gemini blocked the response (finishReason: {$reason})")
+            );
+        }
+
         // Anthropic Messages API shape.
         if (isset($decoded['content'][0]['text'])) {
             return trim($decoded['content'][0]['text']);
         }
 
-        // OpenAI-compatible shape (chat completions).
+        // OpenAI-compatible chat completions shape.
         if (isset($decoded['choices'][0]['message']['content'])) {
             return trim($decoded['choices'][0]['message']['content']);
         }
 
-        // API returned an error object.
-        if (isset($decoded['error'])) {
-            $errormsg = $decoded['error']['message'] ?? json_encode($decoded['error']);
-            throw new \local_lid\exception\llm_response_exception(
-                get_string('error_llm_request_failed', 'local_lid', $errormsg)
-            );
-        }
+        // Unknown shape — log the first 500 chars for debugging.
+        debugging(
+            'local_lid client: unrecognised API response shape. First 500 chars: '
+            . substr($rawresponse, 0, 500),
+            DEBUG_DEVELOPER
+        );
 
         throw new \local_lid\exception\llm_response_exception(
             get_string('error_llm_response_exception', 'local_lid')
@@ -210,16 +272,30 @@ class client {
     /**
      * Build and configure a cURL handle for the API request.
      *
-     * Uses Moodle's curl class where available for proxy support, falling
-     * back to a raw curl handle. The Anthropic API requires an
-     * x-api-key header; OpenAI-compatible endpoints use Authorization: Bearer.
-     * We send both so the client works with either provider without
-     * configuration changes.
+     * Headers are provider-specific:
+     *   Gemini:    x-goog-api-key (key appended to URL as ?key= is also supported
+     *              but header is cleaner)
+     *   Anthropic: x-api-key + anthropic-version
+     *   OpenAI:    Authorization: Bearer
      *
-     * @param  string   $body JSON-encoded request body.
-     * @return resource        Configured cURL handle.
+     * @param  string $body JSON-encoded request body.
+     * @return resource     Configured cURL handle.
      */
     private function make_curl_handle(string $body) {
+
+        // Build provider-specific headers.
+        $headers = ['Content-Type: application/json', 'User-Agent: MoodleLocalLID/1.0'];
+
+        if ($this->provider === self::PROVIDER_GEMINI) {
+            $headers[] = 'x-goog-api-key: ' . $this->apikey;
+        } else if ($this->provider === self::PROVIDER_ANTHROPIC) {
+            $headers[] = 'x-api-key: ' . $this->apikey;
+            $headers[] = 'Authorization: Bearer ' . $this->apikey;
+            $headers[] = 'anthropic-version: 2023-06-01';
+        } else {
+            // OpenAI-compatible (Ollama, etc.).
+            $headers[] = 'Authorization: Bearer ' . $this->apikey;
+        }
 
         $curl = curl_init();
 
@@ -230,13 +306,7 @@ class client {
             CURLOPT_POSTFIELDS     => $body,
             CURLOPT_TIMEOUT        => $this->timeout,
             CURLOPT_CONNECTTIMEOUT => 15,
-            CURLOPT_HTTPHEADER     => [
-                'Content-Type: application/json',
-                'x-api-key: '       . $this->apikey,         // Anthropic.
-                'Authorization: Bearer ' . $this->apikey,    // OpenAI-compatible.
-                'anthropic-version: 2023-06-01',              // Required by Anthropic API.
-                'User-Agent: MoodleLocalLID/1.0',
-            ],
+            CURLOPT_HTTPHEADER     => $headers,
             CURLOPT_SSL_VERIFYPEER => true,
             CURLOPT_SSL_VERIFYHOST => 2,
         ]);
@@ -246,11 +316,20 @@ class client {
 
     /**
      * Return the model string currently configured.
-     * Useful for storing the snapshot model in local_lid_analysis.llm_model.
      *
      * @return string
      */
     public function get_model(): string {
         return $this->model;
+    }
+
+    /**
+     * Return the detected provider string.
+     * Useful for logging and diagnostics.
+     *
+     * @return string
+     */
+    public function get_provider(): string {
+        return $this->provider;
     }
 }
