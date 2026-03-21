@@ -170,11 +170,11 @@ class student_lid_page implements \renderable, \templatable {
             // Stale detection: compare prompt hash against the forum discussion
             // analyzer hash. The forum analyzer is the prompt used for student_forum
             // scope — not the session analyzer prompt.
+            // get_forum_analyzer_hash() is an instance method (requires $this->forumanalyzer
+            // to be populated via the constructor), so we instantiate prompt_builder here.
             if (!$stale && $studentagg->prompt_hash) {
-                $currenthash = \local_lid\llm\prompt_builder::get_forum_analyzer_hash(
-                    $courseid,
-                    $forumid
-                );
+                $builder     = new \local_lid\llm\prompt_builder($courseid, $forumid);
+                $currenthash = $builder->get_forum_analyzer_hash();
                 if ($currenthash && $studentagg->prompt_hash !== $currenthash) {
                     $stale = true;
                 }
