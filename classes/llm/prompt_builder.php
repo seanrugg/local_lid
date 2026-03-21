@@ -177,13 +177,13 @@ class prompt_builder {
         }
 
         $sql = "SELECT fp.id, fp.discussion, fp.userid, fp.message,
-                       fp.subject, fp.timecreated,
+                       fp.subject, fp.created,
                        fd.name AS discussion_name
                   FROM {forum_posts} fp
                   JOIN {forum_discussions} fd ON fd.id = fp.discussion
                  WHERE fd.forum = :forumid
                    AND fp.userid = :userid
-              ORDER BY fp.timecreated ASC";
+              ORDER BY fp.created ASC";
 
         $posts = $DB->get_records_sql($sql, [
             'forumid' => $this->forumid,
@@ -217,10 +217,10 @@ class prompt_builder {
         global $DB;
 
         $sql = "SELECT fp.id, fp.discussion, fp.userid, fp.message,
-                       fp.subject, fp.timecreated
+                       fp.subject, fp.created
                   FROM {forum_posts} fp
                  WHERE fp.discussion = :discussionid
-              ORDER BY fp.timecreated ASC";
+              ORDER BY fp.created ASC";
 
         $posts = $DB->get_records_sql($sql, ['discussionid' => $discussionid]);
 
@@ -256,7 +256,7 @@ class prompt_builder {
      *
      * Kept for compatibility. Prefer build_for_thread_by_id() for new code.
      *
-     * @param  \stdClass[] $posts   Posts ordered by timecreated ASC.
+     * @param  \stdClass[] $posts   Posts ordered by created ASC.
      * @param  string      $subject Discussion subject line.
      * @return string               Complete prompt string.
      */
@@ -565,9 +565,9 @@ class prompt_builder {
      * each thread. Each post is annotated with its word count and substantive/short
      * classification so the LLM can apply weighting rules without counting itself.
      *
-     * @param  \stdClass[] $posts     All posts by the learner, ordered by timecreated ASC.
+     * @param  \stdClass[] $posts     All posts by the learner, ordered by created ASC.
      *                                Each record must have: id, discussion, message,
-     *                                timecreated, discussion_name.
+     *                                created, discussion_name.
      * @param  string      $forumname Forum name (used in section header).
      * @return string
      */
@@ -599,7 +599,7 @@ class prompt_builder {
             foreach ($thread['posts'] as $post) {
                 $body      = $this->clean_post_body($post->message ?? '');
                 $wordcount = $this->count_words($body);
-                $date      = userdate($post->timecreated,
+                $date      = userdate($post->created,
                     get_string('strftimedatetimeshort', 'langconfig'));
                 $label     = $wordcount >= self::SUBSTANTIVE_WORD_THRESHOLD
                     ? '[' . $wordcount . ' words — substantive]'
@@ -619,7 +619,7 @@ class prompt_builder {
      *
      * Used by build_for_thread_by_id(). Authors mapped to Participant A, B, etc.
      *
-     * @param  \stdClass[] $posts   All posts in the thread, ordered by timecreated ASC.
+     * @param  \stdClass[] $posts   All posts in the thread, ordered by created ASC.
      * @param  string      $subject Discussion subject.
      * @return string
      */
@@ -639,7 +639,7 @@ class prompt_builder {
                 $letter++;
             }
             $author    = $authormap[$uid];
-            $date      = userdate($post->timecreated,
+            $date      = userdate($post->created,
                 get_string('strftimedatetimeshort', 'langconfig'));
             $body      = $this->clean_post_body($post->message ?? '');
             $wordcount = $this->count_words($body);
@@ -685,7 +685,7 @@ class prompt_builder {
     /**
      * Format an array of posts (legacy thread variant, no word-count annotation).
      *
-     * @param  \stdClass[] $posts   Posts ordered by timecreated ASC.
+     * @param  \stdClass[] $posts   Posts ordered by created ASC.
      * @param  string      $subject Discussion subject.
      * @return string
      */
@@ -705,7 +705,7 @@ class prompt_builder {
                 $authormap[$uid] = 'Participant ' . $letter;
                 $letter++;
             }
-            $date    = userdate($post->timecreated,
+            $date    = userdate($post->created,
                 get_string('strftimedatetimeshort', 'langconfig'));
             $body    = $this->clean_post_body($post->message ?? '');
             $lines[] = "--- {$authormap[$uid]} ({$date}) ---";
