@@ -28,6 +28,8 @@
  *   error_*             — error messages
  *   privacy_*           — GDPR privacy provider strings
  *   task_*              — scheduled task strings
+ *   notification_*      — messaging/email notification strings
+ *   discussion_model_*  — participation model selector strings
  *
  * @package    local_lid
  * @copyright  2026 Learning Intelligence Dashboard Project Contributors
@@ -109,7 +111,7 @@ $string['settings_cron_interval']          = 'Cron interval (minutes)';
 $string['settings_cron_interval_desc']     = 'How often the analysis queue is drained, in minutes. Minimum: 1 (every minute, for high-volume environments). Maximum: 1440 (once per day). Default: 5. This directly sets the scheduled task frequency.';
 
 $string['settings_cron_batchsize']         = 'Max items per cron run';
-$string['settings_cron_batchsize_desc']    = 'Maximum number of posts analysed per scheduled task execution. Limits LLM API call volume per run. Default: 10.';
+$string['settings_cron_batchsize_desc']    = 'Maximum number of analyses processed per scheduled task execution. Limits LLM API call volume per run. Default: 10.';
 
 // ---------------------------------------------------------------------------
 // Prompt editor UI
@@ -132,11 +134,47 @@ $string['prompt_chars']               = '{$a} characters';
 
 $string['forum_config_heading']       = 'Learning Intelligence Dashboard';
 $string['forum_config_enabled']       = 'Enable LID analysis';
-$string['forum_config_enabled_desc']  = 'When enabled, posts in this forum will be queued for Learning Intelligence analysis. Disable to exclude this forum from all LID dashboards.';
+$string['forum_config_enabled_desc']  = 'When enabled, learner participation in this forum will be assessed by the Learning Intelligence system after the discussion closes. Disable to exclude this forum from all LID dashboards.';
 $string['forum_config_prompt']        = 'Forum-level prompt override';
-$string['forum_config_prompt_desc']   = 'Optionally override the prompt for this forum only. Leave blank to use the course or site-level prompt. Only available when the site administrator has not locked the prompt.';
+$string['forum_config_prompt_desc']   = 'Optionally override the session analyzer prompt for this forum only. Leave blank to use the course or site-level prompt. Only available when the site administrator has not locked the prompt. Note: the forum discussion analyzer prompt is not overridable — it is the fixed assessment instrument for closed discussions.';
 $string['forum_config_saved']         = 'Forum LID settings saved.';
 $string['forum_disabled_notice']      = 'LID analysis is disabled for this forum. No analysis will be performed and no dashboard will be displayed.';
+
+// ---------------------------------------------------------------------------
+// Forum configuration — discussion model selector
+// ---------------------------------------------------------------------------
+
+$string['forum_config_discussion_model']       = 'Discussion participation model';
+$string['forum_config_discussion_model_desc']  = 'Select the participation model that best describes how this forum discussion is structured. This determines which Critical Discourse assessment rubric the LID system applies when evaluating learner contributions. Choose carefully — the wrong model will produce inaccurate scores.';
+
+$string['discussion_model_independent_first']       = 'Independent First';
+$string['discussion_model_independent_first_desc']  = 'Learners post their own original response before seeing peers. Assessment weights the original contribution heavily. Peer replies are engagement evidence but secondary to independent reasoning. Use when the forum is configured to hide posts until learners have submitted their own.';
+
+$string['discussion_model_open_engagement']         = 'Open Engagement';
+$string['discussion_model_open_engagement_desc']    = 'Learners can read all posts before contributing. Peer-directed critical discourse, synthesis, and constructive challenge are the primary expected behaviours. A learner who only responds to the instructor prompt without engaging peers is missing the instructional intent. Use for standard discussion forums.';
+
+$string['discussion_model_structured_debate']       = 'Structured Debate';
+$string['discussion_model_structured_debate_desc']  = 'Learners argue assigned or chosen positions. Assessment focuses on advocacy, counterargument, evidence quality, and position defence. Maintaining a well-reasoned position under challenge is a strength; revising a position where evidence genuinely warrants it is intellectual integrity. Use when the curriculum assigns debate roles or requires position papers.';
+
+// ---------------------------------------------------------------------------
+// Forum LID dashboard — analysis trigger and status
+// ---------------------------------------------------------------------------
+
+$string['dashboard_forum_title']              = 'Forum Learning Intelligence Dashboard';
+$string['dashboard_forum_aggregate']          = 'Forum aggregate';
+$string['dashboard_forum_learners']           = 'Learner contributions';
+$string['dashboard_forum_noposts']            = 'No analysis data found for this forum. Analysis runs automatically when the forum discussion closes.';
+$string['dashboard_forum_viewlearner']        = 'View learner LID';
+$string['dashboard_forum_reanalyse']          = 'Re-analyse';
+$string['dashboard_forum_reanalyse_all']      = 'Run LID Analysis';
+$string['dashboard_forum_discussion_model']   = 'Assessment model: {$a}';
+
+$string['dashboard_forum_analysis_pending']   = 'Analysis is currently running. Refresh this page in a few minutes to see results.';
+$string['dashboard_forum_stale_notice']       = 'One or more learners have posted since the last analysis ran. Re-run LID Analysis to include their latest contributions.';
+$string['dashboard_forum_lid_guidance']       = 'LID analysis runs automatically when the forum closes. A forum is considered closed when: the cut-off date passes, discussions are locked after a period of inactivity, or all discussions are manually locked. Show/hide of the forum activity does not trigger analysis.';
+
+$string['dashboard_forum_thread_heading']     = 'Discussion threads';
+$string['dashboard_forum_thread_pending']     = 'Thread analysis pending.';
 
 // ---------------------------------------------------------------------------
 // Dashboard — shared labels
@@ -144,10 +182,10 @@ $string['forum_disabled_notice']      = 'LID analysis is disabled for this forum
 
 $string['dashboard_competencies']        = 'Competencies';
 $string['dashboard_blooms']              = 'Bloom\'s progression';
-$string['dashboard_roi']                 = 'ROI & value';
-$string['dashboard_employer_value']      = 'Employer value';
-$string['dashboard_timeline']            = 'Learning timeline';
-$string['dashboard_portfolio']           = 'Portfolio documentation';
+$string['dashboard_discussion_value']    = 'Discussion value';
+$string['dashboard_dci']                 = 'Discussion Contribution Index';
+$string['dashboard_instructor_notes']    = 'Assessment notes';
+$string['dashboard_timeline']            = 'Participation timeline';
 $string['dashboard_radar']               = 'Competency radar';
 $string['dashboard_nodata']              = 'No analysis data available yet.';
 $string['dashboard_stale_notice']        = 'One or more analyses were produced with a different prompt version. Consider re-running analysis for up-to-date results.';
@@ -162,25 +200,13 @@ $string['dashboard_course_allfora']      = 'All forums (aggregate)';
 $string['dashboard_course_noforums']     = 'No LID-enabled forums found in this course. Enable LID analysis on one or more forum activities to see data here.';
 
 // ---------------------------------------------------------------------------
-// Dashboard — Forum LID
-// ---------------------------------------------------------------------------
-
-$string['dashboard_forum_title']         = 'Forum Learning Intelligence Dashboard';
-$string['dashboard_forum_aggregate']     = 'Forum aggregate';
-$string['dashboard_forum_students']      = 'Student contributions';
-$string['dashboard_forum_noposts']       = 'No analysed posts found for this forum.';
-$string['dashboard_forum_viewstudent']   = 'View student LID';
-$string['dashboard_forum_reanalyse']     = 'Re-analyse';
-$string['dashboard_forum_reanalyse_all'] = 'Re-analyse all posts';
-
-// ---------------------------------------------------------------------------
 // Dashboard — Student LID
 // ---------------------------------------------------------------------------
 
-$string['dashboard_student_title']       = 'Student Learning Intelligence Dashboard';
+$string['dashboard_student_title']       = 'Learner Learning Intelligence Dashboard';
 $string['dashboard_student_allfora']     = 'All forums (aggregate)';
-$string['dashboard_student_noposts']     = 'No analysed posts found for this student in LID-enabled forums.';
-$string['dashboard_student_viewpost']    = 'View post analysis';
+$string['dashboard_student_noposts']     = 'No analysed contributions found for this learner in LID-enabled forums.';
+$string['dashboard_student_viewpost']    = 'View analysis';
 
 // ---------------------------------------------------------------------------
 // Analysis status labels
@@ -190,16 +216,17 @@ $string['status_pending']    = 'Pending';
 $string['status_processing'] = 'Processing';
 $string['status_complete']   = 'Complete';
 $string['status_error']      = 'Error';
+$string['status_stale']      = 'New posts since last analysis';
 $string['status_disabled']   = 'Disabled';
 
 // ---------------------------------------------------------------------------
 // Manual trigger UI
 // ---------------------------------------------------------------------------
 
-$string['trigger_analyse_post']    = 'Analyse this post';
-$string['trigger_analyse_forum']   = 'Analyse this forum';
-$string['trigger_queued']          = 'Analysis queued. Results will appear shortly.';
-$string['trigger_already_queued']  = 'This item is already queued for analysis.';
+$string['trigger_analyse_forum']   = 'Run LID Analysis';
+$string['trigger_queued']          = 'Analysis queued. Results will appear when the forum is fully assessed.';
+$string['trigger_already_queued']  = 'Analysis is already queued for this forum.';
+$string['trigger_no_posts']        = 'No learner posts found in this forum. There is nothing to analyse.';
 
 // ---------------------------------------------------------------------------
 // Error messages
@@ -222,15 +249,46 @@ $string['error_upload_invalid_type']   = 'Only .md files are accepted for prompt
 $string['task_process_queue'] = 'Process Learning Intelligence analysis queue';
 
 // ---------------------------------------------------------------------------
+// Completion notifications (sent via Moodle messaging — message_send())
+// Requires db/messages.php to register the 'analysis_complete' message type.
+//
+// Placeholders:
+//   {$a->forum}   — forum name
+//   {$a->course}  — course full name
+//   {$a->shortname} — course short name (used in subject only)
+//   {$a->count}   — number of learners analysed
+//   {$a->url}     — URL to the Forum LID dashboard
+// ---------------------------------------------------------------------------
+
+$string['notification_complete_subject'] = 'LID analysis complete — {$a->forum} ({$a->shortname})';
+
+$string['notification_complete_body']    = 'Learning Intelligence analysis has completed for the forum "{$a->forum}" in {$a->course}.
+
+{$a->count} learner(s) have been assessed. You can view the results in the Forum LID dashboard:
+
+{$a->url}
+
+This notification was sent because you have the "View forum Learning Intelligence Dashboard" permission for this course. You can adjust your notification preferences in your Moodle profile.';
+
+$string['notification_complete_body_html'] = '<p>Learning Intelligence analysis has completed for the forum <strong>{$a->forum}</strong> in <em>{$a->course}</em>.</p>
+<p><strong>{$a->count}</strong> learner(s) have been assessed.</p>
+<p><a href="{$a->url}">View the Forum LID Dashboard</a></p>
+<p style="color:#666;font-size:12px;">This notification was sent because you have the "View forum Learning Intelligence Dashboard" permission for this course. You can adjust your notification preferences in your Moodle profile.</p>';
+
+$string['notification_complete_small']   = 'LID analysis complete for {$a->forum} — {$a->count} learner(s) assessed.';
+
+$string['notification_complete_urlname'] = 'Forum LID Dashboard';
+
+// ---------------------------------------------------------------------------
 // Privacy / GDPR
 // ---------------------------------------------------------------------------
 
-$string['privacy_metadata_local_lid_analysis']             = 'Stores LID analysis results derived from forum post content submitted by the user.';
-$string['privacy_metadata_local_lid_analysis_userid']      = 'The Moodle user ID of the post author whose content was analysed.';
-$string['privacy_metadata_local_lid_analysis_json']        = 'The structured LID JSON output produced by the LLM from the user\'s post content.';
-$string['privacy_metadata_local_lid_analysis_postid']      = 'The ID of the forum post that was analysed.';
+$string['privacy_metadata_local_lid_analysis']             = 'Stores LID analysis results derived from forum participation by the learner.';
+$string['privacy_metadata_local_lid_analysis_userid']      = 'The Moodle user ID of the learner whose forum participation was analysed.';
+$string['privacy_metadata_local_lid_analysis_json']        = 'The structured LID JSON output produced by the LLM from the learner\'s forum posts.';
+$string['privacy_metadata_local_lid_analysis_postid']      = 'The ID of the forum post that was analysed (legacy post-scope rows only).';
 $string['privacy_metadata_local_lid_analysis_timecreated'] = 'The time the analysis record was created.';
-$string['privacy_metadata_llm_api']                        = 'Post content is sent to a third-party LLM API for analysis. The data sent includes the text of forum posts authored by the user. No data is retained by this plugin beyond the structured JSON output. Institutions are responsible for the data processing terms of their chosen LLM provider.';
+$string['privacy_metadata_llm_api']                        = 'Forum post content is sent to a third-party LLM API for analysis. The data sent includes the text of forum posts authored by the learner. No data is retained by this plugin beyond the structured JSON output. Institutions are responsible for the data processing terms of their chosen LLM provider.';
 
 // ---------------------------------------------------------------------------
 // Capability strings — required by Moodle's permissions/roles UI
@@ -240,10 +298,13 @@ $string['privacy_metadata_llm_api']                        = 'Post content is se
 $string['lid:managesitesettings']    = 'Manage Learning Intelligence Dashboard site settings';
 $string['lid:viewcoursedashboard']   = 'View the course-level Learning Intelligence Dashboard';
 $string['lid:viewforumdashboard']    = 'View the forum-level Learning Intelligence Dashboard';
-$string['lid:viewstudentdashboard']  = 'View the student-level Learning Intelligence Dashboard';
+$string['lid:viewstudentdashboard']  = 'View the learner-level Learning Intelligence Dashboard';
 $string['lid:configureforum']        = 'Enable or disable LID analysis for a forum';
 $string['lid:editprompt']            = 'Edit the LID session analyzer prompt template';
-$string['lid:triggeranalysis']       = 'Manually trigger LID analysis for posts or forums';
+$string['lid:triggeranalysis']       = 'Manually trigger LID analysis for a forum';
+
+// ---------------------------------------------------------------------------
+// Three-tier enable/disable hierarchy — site level
 // ---------------------------------------------------------------------------
 
 $string['settings_heading_enablement']         = 'LID enablement defaults';
@@ -266,7 +327,7 @@ $string['course_settings_disable_all_desc']    = 'Immediately disables LID analy
 $string['course_settings_status']              = 'Current status';
 $string['course_settings_forums_enabled']      = '{$a} forum(s) currently have LID enabled in this course.';
 $string['course_settings_forums_total']        = '{$a} forum(s) total in this course.';
-$string['course_settings_saved']              = 'Course LID settings saved. {$a} forum(s) updated.';
+$string['course_settings_saved']               = 'Course LID settings saved. {$a} forum(s) updated.';
 $string['course_settings_force_disabled']      = 'LID is currently force-disabled at the site level. Contact your site administrator to enable it.';
 $string['nav_coursesettings']                  = 'Learning Intelligence settings';
 
@@ -276,8 +337,8 @@ $string['nav_coursesettings']                  = 'Learning Intelligence settings
 
 $string['forum_lid_section']                   = 'Learning Intelligence Dashboard';
 $string['forum_lid_enabled_label']             = 'Enable LID analysis';
-$string['forum_lid_enabled_label_help']        = 'When enabled, student posts in this forum will be analysed by the Learning Intelligence system. Scores, competency maps, and Bloom\'s Taxonomy progression will be available to instructors in the LID dashboard. Disable for announcement forums, community forums, or any forum where structured academic analysis is not appropriate.';
-$string['forum_lid_enabled_help']              = 'When enabled, student posts in this forum will be analysed by the Learning Intelligence system. Scores, competency maps, and Bloom\'s Taxonomy progression will be available to instructors in the LID dashboard. Disable for announcement forums, community forums, or any forum where structured academic analysis is not appropriate.';
+$string['forum_lid_enabled_label_help']        = 'When enabled, learner participation in this forum will be assessed by the Learning Intelligence system after the discussion closes. Disable for announcement forums, community forums, or any forum where structured academic analysis is not appropriate.';
+$string['forum_lid_enabled_help']              = 'When enabled, learner participation in this forum will be assessed by the Learning Intelligence system after the discussion closes. Disable for announcement forums, community forums, or any forum where structured academic analysis is not appropriate.';
 $string['forum_lid_force_disabled_notice']     = 'LID analysis is currently disabled site-wide by your administrator and cannot be enabled here.';
 $string['forum_lid_saved']                     = 'Forum LID setting saved.';
 
