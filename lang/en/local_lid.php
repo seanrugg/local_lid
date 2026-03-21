@@ -144,8 +144,22 @@ $string['forum_disabled_notice']      = 'LID analysis is disabled for this forum
 // Forum configuration — discussion model selector
 // ---------------------------------------------------------------------------
 
-$string['forum_config_discussion_model']       = 'Discussion participation model';
-$string['forum_config_discussion_model_desc']  = 'Select the participation model that best describes how this forum discussion is structured. This determines which Critical Discourse assessment rubric the LID system applies when evaluating learner contributions. Choose carefully — the wrong model will produce inaccurate scores.';
+$string['forum_config_discussion_model']      = 'Discussion participation model';
+$string['forum_config_discussion_model_desc'] = 'Select the participation model that best describes how this forum discussion is structured. This determines which Critical Discourse assessment rubric the LID system applies when evaluating learner contributions. Choose carefully — the wrong model will produce inaccurate scores.';
+
+// Help button text — displayed in the Moodle form help popup.
+// Required by lib.php: $mform->addHelpButton('local_lid_discussion_model',
+//                          'forum_config_discussion_model', 'local_lid')
+// Moodle looks up $string['forum_config_discussion_model_help'] for the popup body.
+$string['forum_config_discussion_model_help'] = 'The discussion participation model tells the Learning Intelligence system how to interpret learner contributions in this forum.
+
+<strong>Independent First</strong> — learners post their own response before seeing peers. The original contribution is weighted heavily. Use when the forum hides posts until the learner has submitted their own.
+
+<strong>Open Engagement</strong> — learners can read all posts before contributing. Peer-directed discourse, synthesis, and constructive challenge are the primary expected behaviours. Use for standard discussion forums.
+
+<strong>Structured Debate</strong> — learners argue assigned or chosen positions. Assessment focuses on advocacy, counterargument, evidence quality, and position defence. Use when the curriculum assigns debate roles or requires position papers.
+
+Choosing the wrong model will produce inaccurate scores. If you are unsure, use Open Engagement.';
 
 $string['discussion_model_independent_first']       = 'Independent First';
 $string['discussion_model_independent_first_desc']  = 'Learners post their own original response before seeing peers. Assessment weights the original contribution heavily. Peer replies are engagement evidence but secondary to independent reasoning. Use when the forum is configured to hide posts until learners have submitted their own.';
