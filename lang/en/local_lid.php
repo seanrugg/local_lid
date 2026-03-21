@@ -194,16 +194,20 @@ $string['dashboard_forum_thread_pending']     = 'Thread analysis pending.';
 // Dashboard — shared labels
 // ---------------------------------------------------------------------------
 
-$string['dashboard_competencies']        = 'Competencies';
-$string['dashboard_blooms']              = 'Bloom\'s progression';
-$string['dashboard_discussion_value']    = 'Discussion value';
-$string['dashboard_dci']                 = 'Discussion Contribution Index';
-$string['dashboard_instructor_notes']    = 'Assessment notes';
-$string['dashboard_timeline']            = 'Participation timeline';
-$string['dashboard_radar']               = 'Competency radar';
-$string['dashboard_nodata']              = 'No analysis data available yet.';
-$string['dashboard_stale_notice']        = 'One or more analyses were produced with a different prompt version. Consider re-running analysis for up-to-date results.';
-$string['dashboard_last_updated']        = 'Last updated: {$a}';
+$string['dashboard_competencies']           = 'Competencies';
+$string['dashboard_blooms']                 = 'Bloom\'s progression';
+$string['dashboard_roi']                    = 'Return on investment';
+$string['dashboard_discussion_value']       = 'Discussion value';
+$string['dashboard_dci']                    = 'Discussion Contribution Index';
+$string['dashboard_retention_indicators']   = 'Retention indicators';
+$string['dashboard_instructor_notes']       = 'Assessment notes';
+$string['dashboard_employer_value']         = 'Employer value';
+$string['dashboard_portfolio']              = 'Portfolio documentation';
+$string['dashboard_timeline']               = 'Participation timeline';
+$string['dashboard_radar']                  = 'Competency radar';
+$string['dashboard_nodata']                 = 'No analysis data available yet.';
+$string['dashboard_stale_notice']           = 'One or more analyses were produced with a different prompt version. Consider re-running analysis for up-to-date results.';
+$string['dashboard_last_updated']           = 'Last updated: {$a}';
 
 // ---------------------------------------------------------------------------
 // Dashboard — Course LID
