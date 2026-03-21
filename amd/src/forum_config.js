@@ -1,39 +1,18 @@
-// This file is part of Moodle - https://moodle.org/
-//
-// Moodle is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// Moodle is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-// GNU General Public License for more details.
-//
-// You should have received a copy of the GNU General Public License
-// along with Moodle.  If not, see <https://www.gnu.org/licenses/>.
-
 /**
  * Forum configuration AMD module for local_lid.
  *
- * Handles the per-forum LID enable/disable toggle and the optional
- * forum-level prompt override editor that appears in the forum settings
- * area (injected via the forum_config.mustache template, rendered into
- * the forum's mod_edit.php settings page or a dedicated settings tab).
+ * Handles the per-forum LID enable/disable toggle, discussion model selector,
+ * and the optional forum-level prompt override editor.
  *
  * Features:
- *   Toggle switch   — checkbox or toggle that enables/disables LID for the forum.
- *                     State is saved immediately via AJAX on change.
- *   Status badge    — small badge next to the forum name in course listings
- *                     showing LID enabled/disabled state.
- *   Prompt override — if prompt is not locked, shows the prompt_editor
- *                     inline for forum-level customisation. The prompt_editor
- *                     AMD module handles the actual textarea interactions;
- *                     this module only controls whether the override section
- *                     is visible based on the toggle state.
- *   Confirmation    — when disabling an already-enabled forum that has
- *                     existing analyses, shows a warning that existing data
- *                     will not be deleted but no new analyses will run.
+ *   Toggle switch        — enables/disables LID for the forum. Saved via AJAX.
+ *   Discussion model     — radio button group selecting the participation model.
+ *                          Saved via a dedicated "Save assessment model" button.
+ *                          Shown only when LID is enabled.
+ *   Prompt override      — if prompt is not locked, shows the prompt_editor
+ *                          inline for forum-level customisation.
+ *   Confirmation         — when disabling a forum that has existing analyses,
+ *                          warns that data is preserved but analysis stops.
  *
  * Expected DOM structure (rendered by forum_config.mustache):
  *
@@ -41,18 +20,20 @@
  *        data-forumid="N"
  *        data-courseid="N"
  *        data-enabled="0|1"
+ *        data-discussion-model="open_engagement|independent_first|structured_debate"
  *        data-url="...ajax.php...">
  *
- *     <label class="lid-toggle-label">
- *       <input type="checkbox" class="lid-forum-enable-toggle" checked?>
- *       <span class="lid-toggle-track">...</span>
- *       Enable Learning Intelligence analysis for this forum
- *     </label>
- *
+ *     <input type="checkbox" class="lid-forum-enable-toggle" ...>
  *     <div class="lid-forum-config-status"></div>
  *
- *     <!-- Only present when prompt is not locked -->
- *     <div class="lid-forum-prompt-section lid-forum-prompt-hidden">
+ *     <div class="lid-forum-model-section [lid-forum-prompt-hidden]">
+ *       <input type="radio" class="lid-forum-model-radio" name="lid_discussion_model_N" value="...">
+ *       ...
+ *       <button class="lid-model-save-btn">Save assessment model</button>
+ *       <span class="lid-model-save-status"></span>
+ *     </div>
+ *
+ *     <div class="lid-forum-prompt-section [lid-forum-prompt-hidden]">
  *       ... prompt_editor markup ...
  *     </div>
  *
@@ -72,18 +53,11 @@ define(['local_lid/prompt_editor'], function(PromptEditor) {
 
     /**
      * Initialise all .lid-forum-config elements on the page.
-     *
-     * Called from forum_config.mustache via:
-     *   require(['local_lid/forum_config'], function(ForumConfig) {
-     *       ForumConfig.init();
-     *   });
      */
     function init() {
         document.querySelectorAll('.lid-forum-config').forEach(function(wrapper) {
             initForumConfig(wrapper);
         });
-
-        // Also initialise any prompt editors present on the page.
         PromptEditor.init();
     }
 
@@ -97,22 +71,26 @@ define(['local_lid/prompt_editor'], function(PromptEditor) {
      * @param {HTMLElement} wrapper
      */
     function initForumConfig(wrapper) {
-        var forumid  = parseInt(wrapper.dataset.forumid,  10);
-        var courseid = parseInt(wrapper.dataset.courseid, 10);
-        var ajaxUrl  = wrapper.dataset.url;
-        var toggle   = wrapper.querySelector('.lid-forum-enable-toggle');
-        var statusEl = wrapper.querySelector('.lid-forum-config-status');
+        var forumid       = parseInt(wrapper.dataset.forumid,  10);
+        var courseid      = parseInt(wrapper.dataset.courseid, 10);
+        var ajaxUrl       = wrapper.dataset.url;
+        var toggle        = wrapper.querySelector('.lid-forum-enable-toggle');
+        var statusEl      = wrapper.querySelector('.lid-forum-config-status');
         var promptSection = wrapper.querySelector('.lid-forum-prompt-section');
+        var modelSection  = wrapper.querySelector('.lid-forum-model-section');
+        var modelSaveBtn  = wrapper.querySelector('.lid-model-save-btn');
+        var modelStatus   = wrapper.querySelector('.lid-model-save-status');
 
         if (!toggle || !forumid || !courseid) {
             return;
         }
 
-        // Reflect initial state.
-        updatePromptSectionVisibility(promptSection, toggle.checked);
+        // Reflect initial visibility.
+        updateSectionVisibility(promptSection, toggle.checked);
+        updateSectionVisibility(modelSection,  toggle.checked);
         updateStatusBadge(statusEl, toggle.checked);
 
-        // Wire up the toggle.
+        // ---- Enable/disable toggle ----
         toggle.addEventListener('change', function() {
             var enabling = toggle.checked;
 
@@ -125,26 +103,77 @@ define(['local_lid/prompt_editor'], function(PromptEditor) {
                         'Existing analysis data will not be deleted. Continue?'
                     );
                     if (!confirmed) {
-                        // Revert the toggle.
                         toggle.checked = true;
                         return;
                     }
                 }
             }
 
-            saveForumConfig(forumid, courseid, enabling, ajaxUrl, toggle, statusEl,
+            saveForumConfig(
+                forumid, courseid, enabling,
+                getSelectedModel(wrapper),
+                ajaxUrl, toggle, statusEl,
                 function(success) {
                     if (success) {
-                        updatePromptSectionVisibility(promptSection, enabling);
+                        updateSectionVisibility(promptSection, enabling);
+                        updateSectionVisibility(modelSection,  enabling);
                         updateStatusBadge(statusEl, enabling);
-                        // Update the page-level LID nav tab visibility.
                         updateNavTabVisibility(enabling);
                     } else {
-                        // Revert toggle on failure.
                         toggle.checked = !enabling;
                     }
                 }
             );
+        });
+
+        // ---- Discussion model save button ----
+        if (modelSaveBtn) {
+            modelSaveBtn.addEventListener('click', function() {
+                var model = getSelectedModel(wrapper);
+
+                // Visual feedback — disable button during save.
+                modelSaveBtn.disabled = true;
+                if (modelStatus) {
+                    modelStatus.textContent = 'Saving…';
+                    modelStatus.style.color = '#5a7090';
+                }
+
+                saveForumConfig(
+                    forumid, courseid, toggle.checked,
+                    model,
+                    ajaxUrl, toggle, null,
+                    function(success) {
+                        modelSaveBtn.disabled = false;
+                        if (success) {
+                            // Update the wrapper's data attribute to reflect saved model.
+                            wrapper.dataset.discussionModel = model;
+                            updateModelOptionStyles(wrapper, model);
+                            if (modelStatus) {
+                                modelStatus.textContent = 'Assessment model saved.';
+                                modelStatus.style.color = 'var(--lid-accent3)';
+                                setTimeout(function() {
+                                    modelStatus.textContent = '';
+                                }, 3000);
+                            }
+                        } else {
+                            if (modelStatus) {
+                                modelStatus.textContent = 'Save failed.';
+                                modelStatus.style.color = '#ff3c3c';
+                            }
+                        }
+                    }
+                );
+            });
+        }
+
+        // ---- Radio button — update card styling on selection ----
+        var radios = wrapper.querySelectorAll('.lid-forum-model-radio');
+        radios.forEach(function(radio) {
+            radio.addEventListener('change', function() {
+                // Update visual selection state immediately on click.
+                // The actual save happens when the save button is clicked.
+                updateModelOptionStyles(wrapper, radio.value);
+            });
         });
     }
 
@@ -153,17 +182,21 @@ define(['local_lid/prompt_editor'], function(PromptEditor) {
     // =========================================================================
 
     /**
-     * Save the forum LID enabled/disabled state via ajax.php.
+     * Save the forum LID config (enabled state + discussion model) via ajax.php.
      *
-     * @param {number}              forumid
-     * @param {number}              courseid
-     * @param {boolean}             enabled
-     * @param {string}              ajaxUrl
-     * @param {HTMLInputElement}    toggle   — disabled during request.
-     * @param {HTMLElement|null}    statusEl — updated with saving indicator.
-     * @param {Function}            onDone   — called with (success: bool).
+     * @param {number}           forumid
+     * @param {number}           courseid
+     * @param {boolean}          enabled
+     * @param {string}           discussionModel
+     * @param {string}           ajaxUrl
+     * @param {HTMLInputElement} toggle      — disabled during request.
+     * @param {HTMLElement|null} statusEl    — updated with saving indicator.
+     * @param {Function}         onDone      — called with (success: bool).
      */
-    function saveForumConfig(forumid, courseid, enabled, ajaxUrl, toggle, statusEl, onDone) {
+    function saveForumConfig(
+        forumid, courseid, enabled, discussionModel,
+        ajaxUrl, toggle, statusEl, onDone
+    ) {
         toggle.disabled = true;
         if (statusEl) {
             statusEl.textContent = 'Saving…';
@@ -171,11 +204,12 @@ define(['local_lid/prompt_editor'], function(PromptEditor) {
         }
 
         var body = new URLSearchParams();
-        body.set('action',   'forum_config');
-        body.set('forumid',  forumid);
-        body.set('courseid', courseid);
-        body.set('enabled',  enabled ? '1' : '0');
-        body.set('sesskey',  M.cfg.sesskey);
+        body.set('action',           'forum_config');
+        body.set('forumid',          forumid);
+        body.set('courseid',         courseid);
+        body.set('enabled',          enabled ? '1' : '0');
+        body.set('discussion_model', discussionModel || 'open_engagement');
+        body.set('sesskey',          M.cfg.sesskey);
 
         fetch(ajaxUrl, {
             method:  'POST',
@@ -194,10 +228,14 @@ define(['local_lid/prompt_editor'], function(PromptEditor) {
                 onDone(false);
             } else {
                 showToast(
-                    enabled ? 'LID analysis enabled for this forum.' :
-                              'LID analysis disabled for this forum.',
+                    enabled
+                        ? 'LID analysis enabled for this forum.'
+                        : 'LID analysis disabled for this forum.',
                     'success'
                 );
+                if (statusEl) {
+                    statusEl.textContent = '';
+                }
                 onDone(true);
             }
         })
@@ -217,15 +255,14 @@ define(['local_lid/prompt_editor'], function(PromptEditor) {
     // =========================================================================
 
     /**
-     * Show or hide the forum-level prompt override section.
-     *
-     * The prompt section is only relevant when LID is enabled, so we hide it
-     * when the forum is disabled to reduce visual noise.
+     * Show or hide a section (model selector or prompt section) based on
+     * whether LID is enabled. Hidden sections are visually removed to
+     * reduce noise when LID is disabled for the forum.
      *
      * @param {HTMLElement|null} section
      * @param {boolean}          enabled
      */
-    function updatePromptSectionVisibility(section, enabled) {
+    function updateSectionVisibility(section, enabled) {
         if (!section) {
             return;
         }
@@ -246,101 +283,106 @@ define(['local_lid/prompt_editor'], function(PromptEditor) {
         if (!statusEl) {
             return;
         }
-        if (enabled) {
-            statusEl.textContent = 'LID enabled';
-            statusEl.style.cssText = 'font-size:10px;font-family:"DM Mono",monospace;' +
-                                     'color:#00ff9d;letter-spacing:1px;margin-top:4px;' +
-                                     'text-transform:uppercase';
-        } else {
-            statusEl.textContent = 'LID disabled';
-            statusEl.style.cssText = 'font-size:10px;font-family:"DM Mono",monospace;' +
-                                     'color:#5a7090;letter-spacing:1px;margin-top:4px;' +
-                                     'text-transform:uppercase';
-        }
+        statusEl.textContent = enabled ? 'Enabled' : 'Disabled';
+        statusEl.style.color = enabled ? 'var(--lid-accent3)' : 'var(--lid-muted)';
+        statusEl.style.fontSize = '10px';
+        statusEl.style.fontFamily = "'DM Mono', monospace";
     }
 
     /**
-     * Show or hide the LID navigation tab in the current forum page.
+     * Update the visual selection state of model option cards.
      *
-     * When a teacher enables LID mid-session, the navigation tab injected by
-     * lib.php won't appear until a page reload. We surface a prompt to reload
-     * rather than trying to dynamically inject nav nodes, which would require
-     * a full Moodle navigation rebuild.
+     * Iterates all radio buttons in the wrapper and applies/removes the
+     * selected styling class on their parent label.
+     *
+     * @param {HTMLElement} wrapper
+     * @param {string}      selectedValue
+     */
+    function updateModelOptionStyles(wrapper, selectedValue) {
+        wrapper.querySelectorAll('.lid-forum-model-radio').forEach(function(radio) {
+            var label = radio.closest('.lid-model-option');
+            if (!label) {
+                return;
+            }
+            if (radio.value === selectedValue) {
+                label.classList.add('lid-model-option-selected');
+                label.style.borderColor = 'var(--lid-accent)';
+                label.style.background  = 'rgba(0,229,255,0.04)';
+            } else {
+                label.classList.remove('lid-model-option-selected');
+                label.style.borderColor = 'var(--lid-border)';
+                label.style.background  = 'var(--lid-surface2)';
+            }
+        });
+    }
+
+    /**
+     * Return the currently selected discussion model value from the radio group.
+     *
+     * @param  {HTMLElement} wrapper
+     * @return {string}      Model value, or 'open_engagement' as safe default.
+     */
+    function getSelectedModel(wrapper) {
+        var checked = wrapper.querySelector('.lid-forum-model-radio:checked');
+        return checked ? checked.value : 'open_engagement';
+    }
+
+    /**
+     * Update the LID nav tab visibility in the activity navigation.
+     *
+     * When LID is enabled, the nav tab should appear; when disabled, it
+     * should be hidden. This avoids a full page reload to reflect the change.
      *
      * @param {boolean} enabled
      */
     function updateNavTabVisibility(enabled) {
-        var lidNavItem = document.querySelector('a[href*="local/lid/forum_view.php"]');
-
-        if (enabled && !lidNavItem) {
-            // Tab doesn't exist yet — prompt reload.
-            showToast(
-                'LID enabled. Reload the page to see the Learning Intelligence tab.',
-                'info'
-            );
+        var navItem = document.querySelector('a[data-key="local_lid_forum"]');
+        if (navItem) {
+            var li = navItem.closest('li');
+            if (li) {
+                li.style.display = enabled ? '' : 'none';
+            }
         }
     }
 
     /**
-     * Show a toast notification.
+     * Show a brief toast notification.
      *
      * @param {string} message
-     * @param {string} [type='info']
+     * @param {string} type    'success' | 'error'
      */
     function showToast(message, type) {
-        type = type || 'info';
-        var colors = {
-            info:    '#00e5ff',
-            success: '#00ff9d',
-            warn:    '#ff6b35',
-            error:   '#ff3c3c',
-        };
         var toast = document.createElement('div');
+        toast.textContent = message;
         toast.style.cssText = [
             'position:fixed',
             'bottom:24px',
             'right:24px',
-            'z-index:9999',
-            'background:#141d2e',
-            'border:1px solid ' + (colors[type] || colors.info),
-            'padding:12px 20px',
+            'padding:10px 16px',
             'border-radius:6px',
+            'font-size:12px',
             'font-family:\'DM Mono\',monospace',
-            'font-size:11px',
-            'color:' + (colors[type] || colors.info),
-            'transform:translateY(80px)',
+            'z-index:9999',
             'opacity:0',
-            'transition:all 0.3s',
-            'pointer-events:none',
-            'max-width:360px',
-            'line-height:1.4',
+            'transition:opacity 0.2s',
+            type === 'success'
+                ? 'background:#0e2a1a;color:#00e5a0;border:1px solid #00e5a0'
+                : 'background:#2a0e0e;color:#ff3c3c;border:1px solid #ff3c3c',
         ].join(';');
-        toast.textContent = message;
+
         document.body.appendChild(toast);
-
         requestAnimationFrame(function() {
-            requestAnimationFrame(function() {
-                toast.style.transform = 'translateY(0)';
-                toast.style.opacity   = '1';
-            });
+            toast.style.opacity = '1';
         });
-
         setTimeout(function() {
-            toast.style.transform = 'translateY(80px)';
-            toast.style.opacity   = '0';
+            toast.style.opacity = '0';
             setTimeout(function() {
                 if (toast.parentNode) {
                     toast.parentNode.removeChild(toast);
                 }
-            }, 300);
-        }, 3500);
+            }, 200);
+        }, 3000);
     }
 
-    // =========================================================================
-    // Public API
-    // =========================================================================
-
-    return {
-        init: init,
-    };
+    return { init: init };
 });
