@@ -24,11 +24,11 @@
 
 defined('MOODLE_INTERNAL') || die();
 
-$plugin->component    = 'local_lid';        // Full component name: type_name.
-$plugin->version      = 2026032002;         // YYYYMMDD00 — increment the last two digits for same-day releases.
-$plugin->requires     = 2024042200;         // Minimum Moodle version: 4.5 LTS (2024042200).
-$plugin->maturity     = MATURITY_ALPHA;     // MATURITY_ALPHA | MATURITY_BETA | MATURITY_RC | MATURITY_STABLE.
-$plugin->release      = '0.3.0';            // Human-readable version string.
+$plugin->component = 'local_lid';        // Full component name: type_name.
+$plugin->version   = 2026032100;         // YYYYMMDDNN — increment NN for same-day releases.
+$plugin->requires  = 2024042200;         // Minimum Moodle version: 4.5 LTS (2024042200).
+$plugin->maturity  = MATURITY_BETA;      // MATURITY_ALPHA | MATURITY_BETA | MATURITY_RC | MATURITY_STABLE.
+$plugin->release   = '0.4.0';            // Human-readable version string.
 
 // No dependencies on other plugins at this stage.
 // When Moodle forum dependency is formalised, add:
