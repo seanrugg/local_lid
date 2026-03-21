@@ -17,7 +17,46 @@
 /**
  * Event observer for local_lid.
  *
- * Handles forum post events and enqueues LID analysis jobs.
+ * Handles forum events and manages LID analysis job queuing.
+ *
+ * Design principles:
+ *
+ *   - LID analysis is a retrospective, post-discussion assessment. Analysis
+ *     is never triggered while a discussion is in progress.
+ *
+ *   - The primary unit of analysis is student_forum scope (all posts by one
+ *     learner across all threads in a forum). No per-post LLM calls are made.
+ *
+ *   - When a learner posts during an active discussion, their student_forum
+ *     analysis row is created (status = 'pending') or flagged stale if a
+ *     completed analysis already exists. No queue entry is created at post time.
+ *
+ *   - Analysis is queued when the forum is reliably closed. Three mechanisms:
+ *
+ *       1. discussion_locked event — instructor locked a thread manually.
+ *          Observer checks whether ALL threads in the forum are now locked.
+ *          If yes, the forum is considered closed and analysis is queued.
+ *
+ *       2. Cut-off date detection — handled by the cron task (process_queue).
+ *          Moodle does not fire a reliable event when a forum cut-off date passes.
+ *
+ *       3. Inactivity lock detection — also handled by cron. The forum setting
+ *          "Lock discussions after period of inactivity" is stored on the forum
+ *          record; cron detects when the threshold has been crossed.
+ *
+ *       4. Manual trigger — instructor clicks "Run LID Analysis" in the Forum
+ *          LID dashboard. Calls queue_forum_analysis() with PRIORITY_MANUAL
+ *          and bypasses all close-state checks.
+ *
+ *   - Show/hide of the forum activity is NOT a trigger. A hidden forum may be
+ *     hidden for reasons unrelated to discussion closure. The Forum LID config
+ *     UI displays guidance that analysis requires the forum to be closed by
+ *     one of the three mechanisms above.
+ *
+ *   - Late post handling: if a learner posts after analysis has already run
+ *     (status = 'complete'), their student_forum row is marked 'stale' and
+ *     a warning indicator appears in the Forum LID dashboard. Re-analysis
+ *     only occurs on the next manual trigger.
  *
  * @package    local_lid
  * @copyright  2026 Learning Intelligence Dashboard Project Contributors
@@ -30,28 +69,18 @@ defined('MOODLE_INTERNAL') || die();
 
 /**
  * Observer class — static handlers called by the Moodle events system.
- *
- * Each handler follows the same pattern:
- *   1. Guard: is LID enabled for this forum? If not, return immediately.
- *   2. Guard: is the relevant trigger mode active? If not, return.
- *   3. Create or update a local_lid_analysis record (scope = 'post').
- *   4. Enqueue a job in local_lid_queue with appropriate priority and
- *      timevisible value.
  */
 class observer {
 
     // -------------------------------------------------------------------------
-    // Constants — queue priority values (must match install.xml comments).
+    // Queue priority constants (must match install.xml and process_queue).
     // -------------------------------------------------------------------------
 
     /** @var int Manual teacher request — highest priority. */
     const PRIORITY_MANUAL = 1;
 
-    /** @var int Async trigger — queued immediately on post submission. */
-    const PRIORITY_ASYNC = 2;
-
-    /** @var int Cron batch — lowest priority. */
-    const PRIORITY_CRON = 3;
+    /** @var int Event/cron triggered — standard priority. */
+    const PRIORITY_CRON = 2;
 
     // -------------------------------------------------------------------------
     // Event handlers
@@ -60,113 +89,330 @@ class observer {
     /**
      * Handle \mod_forum\event\post_created.
      *
-     * Creates a new analysis record and enqueues it. If neither async nor cron
-     * trigger is enabled (manual-only mode), no queue entry is created here;
-     * the teacher must trigger analysis explicitly via the UI.
+     * Does NOT queue analysis. Instead:
+     *   - Creates a student_forum analysis row for this learner+forum if one
+     *     does not already exist (status = 'pending').
+     *   - If a 'complete' row exists (analysis ran before this post was made),
+     *     marks it 'stale' so the Forum LID dashboard shows a late-post warning.
+     *   - 'pending', 'stale', or 'processing' rows are left untouched.
+     *   - 'error' rows are reset to 'pending' so they can be retried.
      *
-     * @param \mod_forum\event\post_created $event The event object.
+     * @param \mod_forum\event\post_created $event
      */
     public static function post_created(\mod_forum\event\post_created $event): void {
-        global $DB;
-
-        $forumid      = self::get_forumid_from_event($event);
-        $courseid     = $event->courseid;
-        $discussionid = $event->other['discussionid'] ?? null;
-        $postid       = $event->objectid;
-        $userid       = $event->userid;
+        $forumid  = self::get_forumid_from_event($event);
+        $courseid = $event->courseid;
+        $userid   = $event->userid;
 
         if (!$forumid || !self::is_forum_enabled($forumid)) {
             return;
         }
 
-        // Create the analysis record.
-        $analysisid = self::create_analysis_record(
-            $courseid,
-            $forumid,
-            $discussionid,
-            $postid,
-            $userid
-        );
-
-        if (!$analysisid) {
-            return;
-        }
-
-        // Enqueue according to active trigger mode.
-        self::enqueue($analysisid, $courseid);
+        self::upsert_student_forum_row($courseid, $forumid, $userid);
     }
 
     /**
-     * Handle \mod_forum\event\post_updated.
+     * Handle \mod_forum\event\discussion_locked.
      *
-     * If a completed analysis exists for this post, marks it as pending
-     * and re-enqueues it so the dashboard reflects the edited content.
-     * If no analysis record exists yet (post was never analysed), creates
-     * one and enqueues it — handles the edge case of editing a post that
-     * was submitted while LID was disabled then later enabled.
+     * Fired when an instructor manually locks a discussion thread.
+     * Checks whether ALL discussions in the forum are now locked.
+     * If yes, queues student_forum and thread analysis for the forum.
      *
-     * @param \mod_forum\event\post_updated $event The event object.
+     * @param \mod_forum\event\discussion_locked $event
      */
-    public static function post_updated(\mod_forum\event\post_updated $event): void {
-        global $DB;
-
-        $forumid      = self::get_forumid_from_event($event);
-        $courseid     = $event->courseid;
-        $discussionid = $event->other['discussionid'] ?? null;
-        $postid       = $event->objectid;
-        $userid       = $event->userid;
+    public static function discussion_locked(\mod_forum\event\discussion_locked $event): void {
+        $forumid  = self::get_forumid_from_event($event);
+        $courseid = $event->courseid;
 
         if (!$forumid || !self::is_forum_enabled($forumid)) {
             return;
         }
 
-        // Check for an existing analysis record for this post.
-        $existing = $DB->get_record('local_lid_analysis', [
-            'scope'  => 'post',
-            'postid' => $postid,
-        ]);
+        if (!self::all_discussions_locked($forumid)) {
+            return; // Not all threads locked yet — wait.
+        }
 
-        if ($existing) {
-            // Reset to pending so the queue task re-analyses with updated content.
-            $DB->update_record('local_lid_analysis', (object) [
-                'id'           => $existing->id,
-                'status'       => 'pending',
-                'timemodified' => time(),
-            ]);
-            $analysisid = $existing->id;
+        self::queue_forum_analysis($courseid, $forumid, self::PRIORITY_CRON);
+    }
 
-            // Remove any existing queue entry for this analysis to avoid duplicates.
-            $DB->delete_records('local_lid_queue', ['analysisid' => $analysisid]);
-        } else {
-            // No prior record — create fresh.
-            $analysisid = self::create_analysis_record(
-                $courseid,
-                $forumid,
-                $discussionid,
-                $postid,
-                $userid
-            );
+    // -------------------------------------------------------------------------
+    // Public — trigger interface (event handler + manual + cron)
+    // -------------------------------------------------------------------------
 
-            if (!$analysisid) {
-                return;
+    /**
+     * Queue LID analysis for all learners and threads in a forum.
+     *
+     * Called from:
+     *   - discussion_locked handler (when all threads are locked)
+     *   - process_queue cron (cut-off date / inactivity lock detection)
+     *   - Forum LID dashboard "Run LID Analysis" button (manual trigger)
+     *
+     * Ensures student_forum rows exist for all learners who have posted,
+     * and thread rows exist for all discussions. Then queues all rows
+     * with status 'pending' or 'stale'. Rows already 'processing' are skipped.
+     *
+     * @param  int $courseid
+     * @param  int $forumid
+     * @param  int $priority  PRIORITY_MANUAL or PRIORITY_CRON.
+     * @return int             Number of analysis rows queued.
+     */
+    public static function queue_forum_analysis(
+        int $courseid,
+        int $forumid,
+        int $priority = self::PRIORITY_MANUAL
+    ): int {
+        global $DB;
+
+        // Ensure student_forum rows exist for all learners who have posted.
+        foreach (self::get_forum_posters($forumid) as $userid) {
+            self::upsert_student_forum_row($courseid, $forumid, $userid);
+        }
+
+        // Ensure thread rows exist for all discussions.
+        self::upsert_thread_rows($courseid, $forumid);
+
+        // Fetch all student_forum and thread rows that need processing.
+        $rows = $DB->get_records_select(
+            'local_lid_analysis',
+            "forumid = :forumid
+             AND scope IN ('student_forum', 'thread')
+             AND status IN ('pending', 'stale')",
+            ['forumid' => $forumid]
+        );
+
+        if (empty($rows)) {
+            return 0;
+        }
+
+        $queued = 0;
+        $now    = time();
+
+        foreach ($rows as $row) {
+            // Skip if already in queue to prevent duplicates.
+            if ($DB->record_exists('local_lid_queue', ['analysisid' => $row->id])) {
+                continue;
+            }
+
+            $queuerecord              = new \stdClass();
+            $queuerecord->analysisid  = $row->id;
+            $queuerecord->priority    = $priority;
+            $queuerecord->attempts    = 0;
+            $queuerecord->timecreated = $now;
+            $queuerecord->timevisible = $now;
+            $queuerecord->timeclaimed = null;
+
+            try {
+                $DB->insert_record('local_lid_queue', $queuerecord);
+
+                // Normalise status to 'pending' so the queue drain picks it up.
+                $DB->update_record('local_lid_analysis', (object) [
+                    'id'           => $row->id,
+                    'status'       => 'pending',
+                    'timemodified' => $now,
+                ]);
+
+                $queued++;
+            } catch (\dml_exception $e) {
+                debugging(
+                    'local_lid observer: failed to queue analysis row ' . $row->id .
+                    ': ' . $e->getMessage(),
+                    DEBUG_DEVELOPER
+                );
             }
         }
 
-        self::enqueue($analysisid, $courseid);
+        return $queued;
     }
 
     // -------------------------------------------------------------------------
-    // Private helpers
+    // Private — analysis row management
     // -------------------------------------------------------------------------
 
     /**
-     * Resolve the forum instance id from an event object.
+     * Upsert a student_forum analysis row for a given learner and forum.
      *
-     * Forum events carry the cm id in $event->contextinstanceid (module context).
-     * We retrieve the forum instance id via the course_modules table.
+     * Status transitions:
+     *   No row       → insert with status 'pending'
+     *   'complete'   → update to 'stale'  (late post after analysis ran)
+     *   'error'      → update to 'pending' (allow retry)
+     *   'pending'    → no change
+     *   'stale'      → no change
+     *   'processing' → no change
      *
-     * @param \core\event\base $event
-     * @return int|null Forum id, or null if it cannot be resolved.
+     * @param int $courseid
+     * @param int $forumid
+     * @param int $userid
+     */
+    private static function upsert_student_forum_row(
+        int $courseid,
+        int $forumid,
+        int $userid
+    ): void {
+        global $DB;
+
+        $existing = $DB->get_record('local_lid_analysis', [
+            'scope'   => 'student_forum',
+            'forumid' => $forumid,
+            'userid'  => $userid,
+        ]);
+
+        $now = time();
+
+        if (!$existing) {
+            $record                 = new \stdClass();
+            $record->scope          = 'student_forum';
+            $record->courseid       = $courseid;
+            $record->forumid        = $forumid;
+            $record->discussionid   = null;
+            $record->postid         = null;
+            $record->userid         = $userid;
+            $record->analysis_json  = null;
+            $record->schema_version = '1.2';
+            $record->status         = 'pending';
+            $record->error_message  = null;
+            $record->llm_model      = null;
+            $record->prompt_hash    = null;
+            $record->timecreated    = $now;
+            $record->timemodified   = $now;
+
+            try {
+                $DB->insert_record('local_lid_analysis', $record);
+            } catch (\dml_exception $e) {
+                debugging(
+                    'local_lid observer: failed to create student_forum row for ' .
+                    "forum {$forumid} user {$userid}: " . $e->getMessage(),
+                    DEBUG_DEVELOPER
+                );
+            }
+            return;
+        }
+
+        $newstatus = null;
+        if ($existing->status === 'complete') {
+            $newstatus = 'stale';
+        } else if ($existing->status === 'error') {
+            $newstatus = 'pending';
+        }
+
+        if ($newstatus !== null) {
+            $DB->update_record('local_lid_analysis', (object) [
+                'id'           => $existing->id,
+                'status'       => $newstatus,
+                'timemodified' => $now,
+            ]);
+        }
+    }
+
+    /**
+     * Ensure a thread-scope analysis row exists for every discussion in the forum.
+     *
+     * Creates 'pending' rows for discussions that have no row yet.
+     * Does not modify existing rows.
+     *
+     * @param int $courseid
+     * @param int $forumid
+     */
+    private static function upsert_thread_rows(int $courseid, int $forumid): void {
+        global $DB;
+
+        $discussions = $DB->get_records('forum_discussions', ['forum' => $forumid], '', 'id, name');
+        $now         = time();
+
+        foreach ($discussions as $discussion) {
+            if ($DB->record_exists('local_lid_analysis', [
+                'scope'        => 'thread',
+                'forumid'      => $forumid,
+                'discussionid' => $discussion->id,
+            ])) {
+                continue;
+            }
+
+            $record                 = new \stdClass();
+            $record->scope          = 'thread';
+            $record->courseid       = $courseid;
+            $record->forumid        = $forumid;
+            $record->discussionid   = $discussion->id;
+            $record->postid         = null;
+            $record->userid         = null;
+            $record->analysis_json  = null;
+            $record->schema_version = '1.2';
+            $record->status         = 'pending';
+            $record->error_message  = null;
+            $record->llm_model      = null;
+            $record->prompt_hash    = null;
+            $record->timecreated    = $now;
+            $record->timemodified   = $now;
+
+            try {
+                $DB->insert_record('local_lid_analysis', $record);
+            } catch (\dml_exception $e) {
+                debugging(
+                    'local_lid observer: failed to create thread row for discussion ' .
+                    $discussion->id . ': ' . $e->getMessage(),
+                    DEBUG_DEVELOPER
+                );
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Private — forum close detection helpers
+    // -------------------------------------------------------------------------
+
+    /**
+     * Return true if ALL discussions in the forum are locked.
+     *
+     * A discussion is locked when forum_discussions.locked = 1.
+     * Returns false for forums with no discussions.
+     *
+     * @param  int $forumid
+     * @return bool
+     */
+    private static function all_discussions_locked(int $forumid): bool {
+        global $DB;
+
+        $total = $DB->count_records('forum_discussions', ['forum' => $forumid]);
+        if ($total === 0) {
+            return false;
+        }
+
+        $locked = $DB->count_records('forum_discussions', [
+            'forum'  => $forumid,
+            'locked' => 1,
+        ]);
+
+        return $locked === $total;
+    }
+
+    /**
+     * Return array of distinct user ids who have posted in the forum.
+     *
+     * @param  int   $forumid
+     * @return int[]
+     */
+    private static function get_forum_posters(int $forumid): array {
+        global $DB;
+
+        $sql = "SELECT DISTINCT fp.userid
+                  FROM {forum_posts} fp
+                  JOIN {forum_discussions} fd ON fd.id = fp.discussion
+                 WHERE fd.forum = :forumid";
+
+        $records = $DB->get_records_sql($sql, ['forumid' => $forumid]);
+        return array_map('intval', array_keys($records));
+    }
+
+    // -------------------------------------------------------------------------
+    // Private — forum enabled check + event helpers
+    // -------------------------------------------------------------------------
+
+    /**
+     * Resolve the forum instance id from a Moodle event.
+     *
+     * Forum events carry the course module id in contextinstanceid.
+     *
+     * @param  \core\event\base $event
+     * @return int|null Forum id, or null on failure.
      */
     private static function get_forumid_from_event(\core\event\base $event): ?int {
         global $DB;
@@ -188,128 +434,28 @@ class observer {
     }
 
     /**
-     * Return true if LID analysis is effectively enabled for the given forum,
-     * resolving the full three-tier hierarchy:
+     * Return true if LID analysis is effectively enabled for the forum.
      *
-     *   1. Site force-disable → always false, no override possible.
+     * Resolution order:
+     *   1. Site force-disable → always false.
      *   2. Forum-level config row → use its enabled value if the row exists.
      *   3. Site default → fall back to lid_default_enabled.
      *
-     * @param int $forumid
+     * @param  int $forumid
      * @return bool
      */
     private static function is_forum_enabled(int $forumid): bool {
         global $DB;
 
-        // Tier 1 — site force-disable is an absolute block.
         if ((bool) get_config('local_lid', 'lid_force_disabled')) {
             return false;
         }
 
-        // Tier 2 — forum-level config row.
         $config = $DB->get_record('local_lid_forum_config', ['forumid' => $forumid]);
         if ($config !== false) {
             return (bool) $config->enabled;
         }
 
-        // Tier 3 — site default (no forum row exists yet).
         return (bool) get_config('local_lid', 'lid_default_enabled');
-    }
-
-    /**
-     * Insert a new local_lid_analysis record with status = 'pending'.
-     *
-     * Returns the new record id, or null on failure.
-     *
-     * @param int      $courseid
-     * @param int      $forumid
-     * @param int|null $discussionid
-     * @param int      $postid
-     * @param int      $userid
-     * @return int|null
-     */
-    private static function create_analysis_record(
-        int $courseid,
-        int $forumid,
-        ?int $discussionid,
-        int $postid,
-        int $userid
-    ): ?int {
-        global $DB;
-
-        // Do not create a duplicate for the same post.
-        if ($DB->record_exists('local_lid_analysis', ['scope' => 'post', 'postid' => $postid])) {
-            return null;
-        }
-
-        $record = new \stdClass();
-        $record->scope         = 'post';
-        $record->courseid      = $courseid;
-        $record->forumid       = $forumid;
-        $record->discussionid  = $discussionid;
-        $record->postid        = $postid;
-        $record->userid        = $userid;
-        $record->analysis_json = null;
-        $record->schema_version = '1.0';
-        $record->status        = 'pending';
-        $record->error_message = null;
-        $record->llm_model     = null;
-        $record->prompt_hash   = null;
-        $record->timecreated   = time();
-        $record->timemodified  = time();
-
-        try {
-            return $DB->insert_record('local_lid_analysis', $record);
-        } catch (\dml_exception $e) {
-            debugging('local_lid observer: failed to create analysis record: ' . $e->getMessage(), DEBUG_DEVELOPER);
-            return null;
-        }
-    }
-
-    /**
-     * Enqueue an analysis job in local_lid_queue.
-     *
-     * Priority and timevisible are determined by the site-level trigger
-     * settings. If no automatic trigger (async or cron) is active, no
-     * queue record is created — the job must be triggered manually.
-     *
-     * @param int $analysisid  The local_lid_analysis.id to queue.
-     * @param int $courseid    Used to resolve course-level config if needed.
-     */
-    private static function enqueue(int $analysisid, int $courseid): void {
-        global $DB;
-
-        $asyncenabled = (bool) get_config('local_lid', 'trigger_async');
-        $cronenabled  = (bool) get_config('local_lid', 'trigger_cron');
-
-        if (!$asyncenabled && !$cronenabled) {
-            // Manual-only mode — no automatic queue entry.
-            return;
-        }
-
-        // Determine priority and timevisible.
-        if ($asyncenabled) {
-            $priority    = self::PRIORITY_ASYNC;
-            $timevisible = time(); // Pick up at the very next task run.
-        } else {
-            // Cron-only: calculate next scheduled batch time.
-            $interval    = max(1, (int) get_config('local_lid', 'cron_interval'));
-            $priority    = self::PRIORITY_CRON;
-            $timevisible = time() + ($interval * 60);
-        }
-
-        $queuerecord = new \stdClass();
-        $queuerecord->analysisid  = $analysisid;
-        $queuerecord->priority    = $priority;
-        $queuerecord->attempts    = 0;
-        $queuerecord->timecreated = time();
-        $queuerecord->timevisible = $timevisible;
-        $queuerecord->timeclaimed = null;
-
-        try {
-            $DB->insert_record('local_lid_queue', $queuerecord);
-        } catch (\dml_exception $e) {
-            debugging('local_lid observer: failed to enqueue analysis job: ' . $e->getMessage(), DEBUG_DEVELOPER);
-        }
     }
 }
