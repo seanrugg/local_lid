@@ -428,10 +428,17 @@ class renderer extends \plugin_renderer_base {
             $score = min(100, max(0, (int) ($comp['score'] ?? 0)));
             $color = $comp['color'] ?? 'cyan';
 
+            // Use html_entity_decode then clean_param to prevent double-encoding.
+            // LLM may return & in competency names (e.g. "Planning & Evaluation").
+            // format_string() would encode these as &amp; which Mustache then
+            // re-encodes to &amp;amp; — instead we clean without HTML-encoding.
+            $name = html_entity_decode($comp['name'] ?? '', ENT_QUOTES | ENT_HTML5, 'UTF-8');
+            $name = clean_param($name, PARAM_TEXT);
+
             $result[] = [
-                'name'        => format_string($comp['name'] ?? ''),
+                'name'        => $name,
                 'score'       => $score,
-                'bar_width'   => $score,   // CSS width percentage.
+                'bar_width'   => $score,
                 'color'       => $color,
                 'color_class' => $colorclasses[$color] ?? 'lid-comp-cyan',
                 'bloom_level' => (int) ($comp['bloom_level'] ?? 1),
