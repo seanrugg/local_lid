@@ -250,7 +250,7 @@ class forum_lid_page implements \renderable, \templatable {
             if ($srow->status === 'complete' && !empty($srow->analysis_json)) {
                 $studenthtml = $output->render_analysis_card(
                     $srow->analysis_json,
-                    ['compact' => true, 'show_portfolio' => false, 'show_timeline' => false]
+                    ['compact' => true, 'show_portfolio' => false, 'show_timeline' => true]
                 );
                 if ((int) $srow->timemodified > $lastmod) {
                     $lastmod = (int) $srow->timemodified;
