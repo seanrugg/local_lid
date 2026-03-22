@@ -164,10 +164,16 @@
     margin-bottom: 14px;
     align-items: start;
 }
-.lid-main-col { display: flex; flex-direction: column; }
+
+/* FIX 1: Consistent spacing between stacked panels inside main-col */
+.lid-main-col {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
 
 /* DV and timeline break out to full width in non-compact */
-.lid-panel-dv       { grid-column: 1 / -1; margin-top: 0 !important; }
+.lid-panel-dv       { grid-column: 1 / -1; }
 .lid-panel-timeline { grid-column: 1 / -1; }
 
 /* Non-compact timeline: 2-column flow for long lists */
@@ -234,7 +240,18 @@
 .lid-dv-stats { display: flex; flex-direction: column; gap: 8px; }
 .lid-dv-stat  { }
 .lid-dv-components { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--lid-dim); }
-.lid-dv-comp-row { display: flex; justify-content: space-between; align-items: center; }
+
+/* FIX 2: Prevent DCI component label/value crowding */
+.lid-dv-comp-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+}
+.lid-dv-comp-row .lid-mono {
+    white-space: nowrap;
+    flex-shrink: 0;
+}
 
 /* Bloom's grid — always 6 across */
 .lid-panel-blooms  { }
@@ -307,22 +324,42 @@
 @keyframes lid-fadeUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
 
 /* ══════════════════════════════════════════════════════════════════════ */
-/* COMPACT (forum learner tabs) — 3-col layout                         */
-/* Col 1: radar + DV stacked | Col 2: competencies | Col 3: timeline   */
+/* FIX 3: COMPACT (forum learner tabs) — now 2-col like Option B       */
+/* Same layout as aggregate: radar+DV in col 1, comps in col 2,        */
+/* DV and timeline go full-width below                                 */
 /* ══════════════════════════════════════════════════════════════════════ */
 .lid-card-compact .lid-score-row    { grid-template-columns: repeat(2, 1fr); gap: 8px; margin-bottom: 12px; }
 .lid-card-compact .lid-score-value  { font-size: 28px; }
 .lid-card-compact .lid-score-card   { padding: 10px; }
-.lid-card-compact .lid-main-grid    { grid-template-columns: 1fr 1fr 1fr; }
+.lid-card-compact .lid-main-grid    { grid-template-columns: 1fr 1fr; }
 .lid-card-compact .lid-blooms-grid  { grid-template-columns: repeat(6, 1fr); }
 
-/* In compact, DV stays in col 1 (inside .lid-main-col), not full-width */
-.lid-card-compact .lid-panel-dv       { grid-column: auto; }
-.lid-card-compact .lid-panel-timeline { grid-column: auto; }
+/* In compact 2-col, DV and timeline go full-width just like non-compact */
+.lid-card-compact .lid-panel-dv       { grid-column: 1 / -1; }
+.lid-card-compact .lid-panel-timeline { grid-column: 1 / -1; }
 
-/* Compact DV: vertical stat layout (stacked in narrow column) */
-.lid-card-compact .lid-dv-stats { flex-direction: column; gap: 8px; }
-.lid-card-compact .lid-dv-components { flex-direction: column; }
+/* Compact DV: horizontal stat layout (matches aggregate) */
+.lid-card-compact .lid-dv-stats {
+    display: flex;
+    gap: 30px;
+    align-items: flex-start;
+    flex-wrap: wrap;
+}
+.lid-card-compact .lid-dv-components {
+    display: flex;
+    gap: 16px;
+    font-size: 11px;
+    flex-wrap: wrap;
+}
+
+/* Compact timeline: 2-column flow like aggregate */
+.lid-card-compact .lid-panel-timeline .lid-timeline {
+    column-count: 2;
+    column-gap: 24px;
+}
+.lid-card-compact .lid-panel-timeline .lid-tl-item {
+    break-inside: avoid;
+}
 
 /* Compact bottom grid: full width */
 .lid-card-compact .lid-bottom-grid { grid-template-columns: 1fr; }
@@ -333,6 +370,7 @@
     .lid-panel-timeline { grid-column: 1 / -1; }
     .lid-blooms-grid { grid-template-columns: repeat(6, 1fr); }
     .lid-card:not(.lid-card-compact) .lid-panel-timeline .lid-timeline { column-count: 1; }
+    .lid-card-compact .lid-panel-timeline .lid-timeline { column-count: 1; }
 }
 @media (max-width: 700px) {
     .lid-score-row   { grid-template-columns: 1fr 1fr; }
@@ -342,5 +380,7 @@
     .lid-forum-tabs  { flex-direction: column; }
     .lid-student-header { flex-direction: column; align-items: flex-start; }
     .lid-card-compact .lid-main-grid { grid-template-columns: 1fr; }
+    .lid-card-compact .lid-panel-dv,
+    .lid-card-compact .lid-panel-timeline { grid-column: 1; }
 }
 </style>
