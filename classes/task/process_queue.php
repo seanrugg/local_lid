@@ -249,26 +249,15 @@ class process_queue extends \core\task\scheduled_task {
     /**
      * Scan LID-enabled forums for cron-detectable close conditions.
      *
-     * Two conditions trigger queuing:
-     *   a) forum.cutoffdate > 0 AND forum.cutoffdate <= $now
-     *   b) forum.lockdiscussionafter > 0 AND all discussions' last post
-     *      is older than (now - lockdiscussionafter seconds)
-     *
-     * A forum is skipped if it already has student_forum analysis rows with
-     * status 'pending', 'processing', or 'complete' — it has already been
-     * detected and queued (or completed) in a previous run.
-     *
      * @param int $now Current Unix timestamp.
      */
     private function detect_closed_forums(int $now): void {
         global $DB;
 
-        // Fetch all LID-enabled forums that have not been force-disabled.
         if ((bool) get_config('local_lid', 'lid_force_disabled')) {
             return;
         }
 
-        // Build list of enabled forum ids.
         $enabledforums = $this->get_enabled_forum_ids();
         if (empty($enabledforums)) {
             return;
@@ -283,20 +272,17 @@ class process_queue extends \core\task\scheduled_task {
         );
 
         foreach ($forums as $forum) {
-            // Skip forums that are already queued or completed.
             if ($this->forum_already_queued_or_complete((int) $forum->id)) {
                 continue;
             }
 
             $should_queue = false;
 
-            // Condition a — cut-off date has passed.
             if (!empty($forum->cutoffdate) && (int) $forum->cutoffdate <= $now) {
                 $should_queue = true;
                 mtrace("local_lid process_queue: forum {$forum->id} cut-off date passed — queuing analysis.");
             }
 
-            // Condition b — inactivity lock threshold crossed for all discussions.
             if (!$should_queue && !empty($forum->lockdiscussionafter)) {
                 $threshold = $now - (int) $forum->lockdiscussionafter;
                 if ($this->all_discussions_past_inactivity_threshold((int) $forum->id, $threshold)) {
@@ -318,8 +304,7 @@ class process_queue extends \core\task\scheduled_task {
 
     /**
      * Return true if the forum already has analysis rows that are pending,
-     * processing, or complete — meaning close detection has already fired
-     * for this forum and we should not re-queue.
+     * processing, or complete.
      *
      * @param  int $forumid
      * @return bool
@@ -340,12 +325,8 @@ class process_queue extends \core\task\scheduled_task {
      * Return true if all discussions in the forum have had no activity
      * since before the given threshold timestamp.
      *
-     * A discussion is considered inactive if its most recent post's
-     * timecreated is <= $threshold.
-     * Returns false for forums with no discussions.
-     *
      * @param  int $forumid
-     * @param  int $threshold Unix timestamp — posts must be older than this.
+     * @param  int $threshold
      * @return bool
      */
     private function all_discussions_past_inactivity_threshold(
@@ -359,8 +340,6 @@ class process_queue extends \core\task\scheduled_task {
             return false;
         }
 
-        // Count discussions where the most recent post is still within the
-        // activity window (i.e. NOT yet past the threshold).
         $still_active = $DB->count_records_sql(
             "SELECT COUNT(*)
                FROM {forum_discussions} fd
@@ -379,11 +358,6 @@ class process_queue extends \core\task\scheduled_task {
     /**
      * Return an array of forum ids that have LID enabled.
      *
-     * Respects the three-tier enable hierarchy:
-     *   1. Site force-disable (checked by caller before this is called)
-     *   2. Per-forum config rows
-     *   3. Site default (lid_default_enabled)
-     *
      * @return int[]
      */
     private function get_enabled_forum_ids(): array {
@@ -391,7 +365,6 @@ class process_queue extends \core\task\scheduled_task {
 
         $sitedefault = (bool) get_config('local_lid', 'lid_default_enabled');
 
-        // Forums with explicit config rows.
         $configrows = $DB->get_records('local_lid_forum_config', null, '', 'forumid, enabled');
 
         $explicit_enabled  = [];
@@ -405,12 +378,10 @@ class process_queue extends \core\task\scheduled_task {
         }
 
         if ($sitedefault) {
-            // Default on — all forums are enabled except those explicitly disabled.
             $allforums = $DB->get_records('forum', null, '', 'id');
             $allids    = array_map(fn($r) => (int) $r->id, $allforums);
             return array_values(array_diff($allids, $explicit_disabled));
         } else {
-            // Default off — only explicitly enabled forums.
             return $explicit_enabled;
         }
     }
@@ -422,8 +393,9 @@ class process_queue extends \core\task\scheduled_task {
     /**
      * Process a single analysis row by building the prompt and calling the LLM.
      *
-     * Handles student_forum and thread scope. Validates the returned JSON
-     * and writes it to local_lid_analysis on success.
+     * Handles student_forum and thread scope. Validates the returned JSON,
+     * strips any markdown fences via the validator, and writes clean
+     * re-encoded JSON to local_lid_analysis on success.
      *
      * @param  \local_lid\analysis\session_analyser $analyser
      * @param  \stdClass                            $analysisrow
@@ -444,7 +416,7 @@ class process_queue extends \core\task\scheduled_task {
         if ($analysisrow->scope === 'student_forum') {
             $forumname = $DB->get_field('forum', 'name', ['id' => $analysisrow->forumid]) ?? '';
             $prompt    = $builder->build_for_student_forum((int) $analysisrow->userid, $forumname);
-            $prompHash = $builder->get_forum_analyzer_hash();
+            $promptHash = $builder->get_forum_analyzer_hash();
         } else if ($analysisrow->scope === 'thread') {
             $discussion = $DB->get_record(
                 'forum_discussions',
@@ -455,11 +427,11 @@ class process_queue extends \core\task\scheduled_task {
                 mtrace("local_lid process_queue: discussion {$analysisrow->discussionid} not found — skipping.");
                 return false;
             }
-            $prompt    = $builder->build_for_thread_by_id(
+            $prompt     = $builder->build_for_thread_by_id(
                 (int) $analysisrow->discussionid,
                 $discussion->name
             );
-            $prompHash = $builder->get_forum_analyzer_hash();
+            $promptHash = $builder->get_forum_analyzer_hash();
         } else {
             mtrace("local_lid process_queue: unsupported scope '{$analysisrow->scope}' — skipping.");
             return false;
@@ -478,6 +450,8 @@ class process_queue extends \core\task\scheduled_task {
         }
 
         // Validate the returned JSON.
+        // validate_json() strips markdown fences and returns the decoded array,
+        // or null if validation fails. We re-encode to store clean JSON.
         $data = $analyser->validate_json($rawjson);
         if ($data === null) {
             return false;
@@ -486,16 +460,24 @@ class process_queue extends \core\task\scheduled_task {
         $schemaversion = $data['schema_version'] ?? '1.2';
         $llmmodel      = $analyser->get_last_model_used();
 
+        // Re-encode the validated, fence-stripped data as clean JSON for storage.
+        $cleanjson = json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+
+        if ($cleanjson === false) {
+            mtrace("local_lid process_queue: JSON re-encode failed for analysis row {$analysisrow->id}.");
+            return false;
+        }
+
         // Write to the analysis row.
         $DB->update_record('local_lid_analysis', (object) [
-            'id'            => $analysisrow->id,
-            'analysis_json' => $rawjson,
+            'id'             => $analysisrow->id,
+            'analysis_json'  => $cleanjson,
             'schema_version' => $schemaversion,
-            'status'        => 'complete',
-            'error_message' => null,
-            'llm_model'     => $llmmodel,
-            'prompt_hash'   => $prompHash,
-            'timemodified'  => time(),
+            'status'         => 'complete',
+            'error_message'  => null,
+            'llm_model'      => $llmmodel,
+            'prompt_hash'    => $promptHash,
+            'timemodified'   => time(),
         ]);
 
         return true;
@@ -508,30 +490,38 @@ class process_queue extends \core\task\scheduled_task {
     /**
      * Trigger forum and course aggregate recomputation for a forum.
      *
-     * Called after each successful analysis. Wrapped in a try/catch by the
-     * caller so that aggregation errors do not affect success reporting.
-     *
      * @param int $forumid
      * @param int $courseid
      */
     private function trigger_aggregation(int $forumid, int $courseid): void {
         $aggregator = new \local_lid\analysis\aggregator();
-        $aggregator->recompute_forum_aggregate($forumid);
+        $aggregator->recompute_forum_aggregate($forumid, $courseid);
         $aggregator->recompute_course_aggregate($courseid);
     }
 
     /**
      * Send a completion notification to instructors if the forum's full
-     * analysis set is now complete (no remaining pending/stale/processing rows).
+     * analysis set is now complete.
      *
-     * Uses Moodle's core messaging API (message_send()) which routes to email
-     * or inbox notification based on each user's notification preferences.
+     * Skips silently if the local_lid message provider is not registered
+     * in Moodle's messaging system to avoid debug noise during development.
      *
      * @param int $forumid
      * @param int $courseid
      */
     private function maybe_notify_completion(int $forumid, int $courseid): void {
         global $DB;
+
+        // Guard: skip if the message provider is not registered.
+        // Prevents debug noise when the messages.php provider definition
+        // has not yet been activated in Moodle's messaging configuration.
+        $providerexists = $DB->record_exists('message_providers', [
+            'component' => 'local_lid',
+            'name'      => 'analysis_complete',
+        ]);
+        if (!$providerexists) {
+            return;
+        }
 
         // Check for any remaining incomplete rows for this forum.
         $pending = $DB->count_records_select(
@@ -543,7 +533,7 @@ class process_queue extends \core\task\scheduled_task {
         );
 
         if ($pending > 0) {
-            return; // Not yet fully complete.
+            return;
         }
 
         $complete = $DB->count_records('local_lid_analysis', [
@@ -553,7 +543,7 @@ class process_queue extends \core\task\scheduled_task {
         ]);
 
         if ($complete === 0) {
-            return; // Nothing completed — nothing to notify about.
+            return;
         }
 
         // Find instructors with view capability for this forum.
@@ -568,53 +558,53 @@ class process_queue extends \core\task\scheduled_task {
             return;
         }
 
-        $forum    = $DB->get_record('forum', ['id' => $forumid], 'id, name, course');
-        $course   = $DB->get_record('course', ['id' => $courseid], 'id, fullname, shortname');
-        $dashurl  = new \moodle_url('/local/lid/forum_lid.php', [
+        $forum   = $DB->get_record('forum', ['id' => $forumid], 'id, name, course');
+        $course  = $DB->get_record('course', ['id' => $courseid], 'id, fullname, shortname');
+        $dashurl = new \moodle_url('/local/lid/forum_lid.php', [
             'forumid'  => $forumid,
             'courseid' => $courseid,
         ]);
 
         foreach ($instructors as $instructor) {
-            $message                     = new \core\message\message();
-            $message->component          = 'local_lid';
-            $message->name               = 'analysis_complete';
-            $message->userfrom           = \core_user::get_noreply_user();
-            $message->userto             = $instructor;
-            $message->subject            = get_string(
+            $message                    = new \core\message\message();
+            $message->component         = 'local_lid';
+            $message->name              = 'analysis_complete';
+            $message->userfrom          = \core_user::get_noreply_user();
+            $message->userto            = $instructor;
+            $message->subject           = get_string(
                 'notification_complete_subject',
                 'local_lid',
                 ['forum' => $forum->name, 'course' => $course->shortname]
             );
-            $message->fullmessage        = get_string(
+            $message->fullmessage       = get_string(
                 'notification_complete_body',
                 'local_lid',
                 [
-                    'forum'    => $forum->name,
-                    'course'   => $course->fullname,
-                    'count'    => $complete,
-                    'url'      => $dashurl->out(false),
+                    'forum'  => $forum->name,
+                    'course' => $course->fullname,
+                    'count'  => $complete,
+                    'url'    => $dashurl->out(false),
                 ]
             );
-            $message->fullmessageformat  = FORMAT_PLAIN;
-            $message->fullmessagehtml    = get_string(
+            $message->fullmessageformat = FORMAT_PLAIN;
+            $message->fullmessagehtml   = get_string(
                 'notification_complete_body_html',
                 'local_lid',
                 [
-                    'forum'    => format_string($forum->name),
-                    'course'   => format_string($course->fullname),
-                    'count'    => $complete,
-                    'url'      => $dashurl->out(false),
+                    'forum'  => format_string($forum->name),
+                    'course' => format_string($course->fullname),
+                    'count'  => $complete,
+                    'url'    => $dashurl->out(false),
                 ]
             );
-            $message->smallmessage       = get_string(
+            $message->smallmessage      = get_string(
                 'notification_complete_small',
                 'local_lid',
                 ['forum' => $forum->name, 'count' => $complete]
             );
-            $message->notification       = 1;
-            $message->contexturl         = $dashurl->out(false);
-            $message->contexturlname     = get_string('notification_complete_urlname', 'local_lid');
+            $message->notification      = 1;
+            $message->contexturl        = $dashurl->out(false);
+            $message->contexturlname    = get_string('notification_complete_urlname', 'local_lid');
 
             try {
                 message_send($message);
@@ -661,10 +651,8 @@ class process_queue extends \core\task\scheduled_task {
     /**
      * Release claimed queue items back to the pool by clearing timeclaimed.
      *
-     * Used when the task aborts early to avoid stranding items permanently.
-     *
-     * @param int[] $ids         Queue item IDs to release.
-     * @param int   $claimedtime The timeclaimed value used when claiming.
+     * @param int[] $ids
+     * @param int   $claimedtime
      */
     private function release_claimed(array $ids, int $claimedtime): void {
         global $DB;
