@@ -52,7 +52,7 @@ defined('MOODLE_INTERNAL') || die();
  *     forum_url          string
  *     student_html       string   — student_forum card HTML (or '')
  *     has_student_lid    bool
- *     post_count         int      — derived from student_forum record or post-scope count
+ *     post_count         int      — actual posts by this learner in this forum
  *     pending_count      int
  *     posts              array    — legacy post-scope detail rows (may be empty)
  *       postid           int
@@ -167,11 +167,7 @@ class student_lid_page implements \renderable, \templatable {
                 $lastmod = (int) $studentagg->timemodified;
             }
 
-            // Stale detection: compare prompt hash against the forum discussion
-            // analyzer hash. The forum analyzer is the prompt used for student_forum
-            // scope — not the session analyzer prompt.
-            // get_forum_analyzer_hash() is an instance method (requires $this->forumanalyzer
-            // to be populated via the constructor), so we instantiate prompt_builder here.
+            // Stale detection.
             if (!$stale && $studentagg->prompt_hash) {
                 $builder     = new \local_lid\llm\prompt_builder($courseid, $forumid);
                 $currenthash = $builder->get_forum_analyzer_hash();
@@ -183,21 +179,16 @@ class student_lid_page implements \renderable, \templatable {
             // Pre-render student_forum card.
             $studenthtml = $output->render_analysis_card($studentagg->analysis_json);
 
-            // Derive post_count: prefer the value stored in the student_forum JSON
-            // if available (avoids an extra DB query), otherwise count post-scope rows.
-            $postcount = $this->extract_post_count($studentagg->analysis_json);
-            if ($postcount === null) {
-                $postcount = (int) $DB->count_records('local_lid_analysis', [
-                    'scope'    => 'post',
-                    'forumid'  => $forumid,
-                    'userid'   => $userid,
-                    'courseid' => $courseid,
-                ]);
-            }
+            // Count actual forum posts by this user — same approach as forum_lid_page.php.
+            $postcount = (int) $DB->count_records_sql(
+                "SELECT COUNT(fp.id)
+                   FROM {forum_posts} fp
+                   JOIN {forum_discussions} fd ON fd.id = fp.discussion
+                  WHERE fd.forum = :forumid AND fp.userid = :userid",
+                ['forumid' => $forumid, 'userid' => $userid]
+            );
 
             // Build legacy post-scope detail rows for the accordion, if any exist.
-            // These are a secondary view only — their absence does not affect the
-            // primary student_forum card display.
             $postrows    = [];
             $pendingcnt  = 0;
 
@@ -293,34 +284,6 @@ class student_lid_page implements \renderable, \templatable {
     // -------------------------------------------------------------------------
     // Private helpers
     // -------------------------------------------------------------------------
-
-    /**
-     * Attempt to extract post_count from a student_forum analysis JSON string.
-     *
-     * The forum discussion analyzer (v1.2) may include a post count in
-     * session.duration_minutes or a custom field. If not present, returns null
-     * and the caller falls back to a DB count of post-scope rows.
-     *
-     * @param  string|null $json
-     * @return int|null
-     */
-    private function extract_post_count(?string $json): ?int {
-        if (empty($json)) {
-            return null;
-        }
-        $data = json_decode($json, true);
-        if (!is_array($data)) {
-            return null;
-        }
-        // Check for an explicit post_count field at root or under session.
-        if (isset($data['post_count']) && is_int($data['post_count'])) {
-            return $data['post_count'];
-        }
-        if (isset($data['session']['post_count']) && is_int($data['session']['post_count'])) {
-            return $data['session']['post_count'];
-        }
-        return null;
-    }
 
     /**
      * Build and render the cross-forum student aggregate card HTML.
