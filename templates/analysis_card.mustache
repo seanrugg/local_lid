@@ -105,7 +105,7 @@
     </div>
     {{/has_cpi}}
 
-    {{! ── Bloom's taxonomy grid — positioned above radar/competencies ── }}
+    {{! ── Bloom's taxonomy grid — positioned above main grid ────────── }}
     <div class="lid-panel lid-panel-blooms" style="margin-bottom:16px">
         <div class="lid-panel-title">{{#str}}dashboard_blooms, local_lid{{/str}}</div>
         <div class="lid-blooms-grid">
@@ -127,24 +127,136 @@
         </div>
     </div>
 
-    {{! ── Main grid (radar + competencies + ROI/discussion value) ──── }}
+    {{! ── Main grid — 3 equal columns ─────────────────────────────────── }}
+    {{! Col 1: Radar + Discussion Value (v1.2) or Radar + ROI (v1.0/1.1)  }}
+    {{! Col 2: Competencies                                                }}
+    {{! Col 3: Timeline                                                    }}
     <div class="lid-main-grid">
 
-        {{! Radar chart }}
-        {{#has_radar}}
-        <div class="lid-panel lid-panel-radar">
-            <div class="lid-panel-title">{{#str}}dashboard_radar, local_lid{{/str}}</div>
-            <div class="lid-radar-container">
-                <canvas class="lid-radar-canvas"
-                        data-axes="{{radar_axes_json}}"
-                        width="280" height="280"
-                        aria-label="Competency radar chart">
-                </canvas>
-            </div>
-        </div>
-        {{/has_radar}}
+        {{! ── Column 1: Radar + Discussion Value / ROI ────────────────── }}
+        <div class="lid-main-col">
 
-        {{! Competency bars }}
+            {{! Radar chart }}
+            {{#has_radar}}
+            <div class="lid-panel lid-panel-radar">
+                <div class="lid-panel-title">{{#str}}dashboard_radar, local_lid{{/str}}</div>
+                <div class="lid-radar-container">
+                    <canvas class="lid-radar-canvas"
+                            data-axes="{{radar_axes_json}}"
+                            width="280" height="280"
+                            aria-label="Competency radar chart">
+                    </canvas>
+                </div>
+            </div>
+            {{/has_radar}}
+
+            {{! Discussion value panel (v1.2 only) — sits below radar }}
+            {{#has_discussion_value}}
+            <div class="lid-panel" style="margin-top:14px">
+                <div class="lid-panel-title">{{#str}}dashboard_discussion_value, local_lid{{/str}}</div>
+
+                {{! DCI score }}
+                {{#has_dci}}
+                <div class="lid-roi-metric">
+                    <div class="lid-roi-label">{{#str}}dashboard_dci, local_lid{{/str}}</div>
+                    <div class="lid-roi-value lid-cpi-{{dci_color}}">{{dci}}</div>
+                    <div class="lid-cpi-bar-bg" style="margin-top:6px">
+                        <div class="lid-cpi-bar-fill lid-comp-{{dci_color}}"
+                             style="width:0"
+                             data-width="{{dci_bar_width}}">
+                        </div>
+                    </div>
+                </div>
+                {{/has_dci}}
+
+                {{! Participation depth — scalar display }}
+                <div class="lid-roi-metric">
+                    <div class="lid-roi-label">Participation depth</div>
+                    <div class="lid-roi-value lid-readiness-{{participation_depth_color}}">{{participation_depth}}</div>
+                    {{#dv_session_hours}}
+                    <div class="lid-roi-desc">{{dv_session_hours}} hrs of discussion participation</div>
+                    {{/dv_session_hours}}
+                </div>
+
+                {{! DCI components }}
+                {{#has_dci_components}}
+                <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--lid-dim)">
+                    {{#dci_components}}
+                    <div class="lid-cpi-component" style="margin-bottom:6px">
+                        <div class="lid-cpi-comp-header">
+                            <span class="lid-cpi-comp-label" style="font-size:10px">{{label}}</span>
+                            <span class="lid-mono" style="font-size:9px;color:var(--lid-muted)">{{score}}</span>
+                        </div>
+                        <div class="lid-comp-bar-bg">
+                            <div class="lid-comp-bar-fill lid-comp-cyan"
+                                 style="width:0;height:3px"
+                                 data-width="{{bar_width}}">
+                            </div>
+                        </div>
+                    </div>
+                    {{/dci_components}}
+                </div>
+                {{/has_dci_components}}
+
+                {{! Retention indicators }}
+                {{#has_retention_indicators}}
+                <div class="lid-roi-metric">
+                    <div class="lid-roi-label">{{#str}}dashboard_retention_indicators, local_lid{{/str}}</div>
+                    <div style="margin-top:6px">
+                        {{#retention_indicators}}
+                        <div class="lid-mono"
+                             style="font-size:10px;color:var(--lid-muted);
+                                    padding:3px 0;border-bottom:1px solid var(--lid-dim)">
+                            {{indicator}}
+                        </div>
+                        {{/retention_indicators}}
+                    </div>
+                </div>
+                {{/has_retention_indicators}}
+
+            </div>
+            {{/has_discussion_value}}
+
+            {{! ROI panel (v1.0 / v1.1 only) — sits below radar }}
+            {{#has_roi}}
+            <div class="lid-panel" style="margin-top:14px">
+                <div class="lid-panel-title">{{#str}}dashboard_roi, local_lid{{/str}}</div>
+                <div class="lid-roi-metric">
+                    <div class="lid-roi-label">Est. knowledge value</div>
+                    <div class="lid-roi-value">${{{knowledge_value}}}</div>
+                    <div class="lid-roi-desc">Equivalent structured training cost</div>
+                </div>
+                <div class="lid-roi-metric">
+                    <div class="lid-roi-label">Time efficiency</div>
+                    <div class="lid-roi-value">{{efficiency_mult}}×</div>
+                    <div class="lid-roi-desc">vs. equivalent LMS courseware (~{{lms_hours}}hrs vs {{session_hours}}hrs)</div>
+                </div>
+                <div class="lid-roi-metric">
+                    <div class="lid-roi-label">Engagement score</div>
+                    <div class="lid-roi-value">{{engagement_score}}%</div>
+                    <div class="lid-roi-bars" data-score="{{engagement_score}}" aria-hidden="true"></div>
+                </div>
+                <div class="lid-roi-metric">
+                    <div class="lid-roi-label">Retention probability</div>
+                    <div class="lid-roi-value">{{retention_pct}}%</div>
+                    <div class="lid-roi-desc">vs. 8–10% passive LMS retention</div>
+                </div>
+                <div class="lid-roi-metric">
+                    <div class="lid-roi-label">Application readiness</div>
+                    <div class="lid-roi-value lid-readiness-{{readiness_color}}">{{application_readiness}}</div>
+                    <div class="lid-roi-desc">Immediate applicability to target roles</div>
+                </div>
+                <div class="lid-roi-metric">
+                    <div class="lid-roi-label">Employer value index</div>
+                    <div class="lid-roi-value">{{employer_value_index}}/10</div>
+                    <div class="lid-roi-desc">Competency rarity, depth, AI integration</div>
+                </div>
+            </div>
+            {{/has_roi}}
+
+        </div>{{! end column 1 }}
+
+        {{! ── Column 2: Competencies ──────────────────────────────────── }}
         <div class="lid-panel lid-panel-comps">
             <div class="lid-panel-title">{{#str}}dashboard_competencies, local_lid{{/str}}</div>
             <div class="lid-comp-list">
@@ -176,111 +288,10 @@
             </div>
         </div>
 
-        {{! ── ROI panel (v1.0 / v1.1 only) ─────────────────────────── }}
-        {{#has_roi}}
-        <div class="lid-panel lid-panel-roi">
-            <div class="lid-panel-title">{{#str}}dashboard_roi, local_lid{{/str}}</div>
-            <div class="lid-roi-metric">
-                <div class="lid-roi-label">Est. knowledge value</div>
-                <div class="lid-roi-value">${{{knowledge_value}}}</div>
-                <div class="lid-roi-desc">Equivalent structured training cost</div>
-            </div>
-            <div class="lid-roi-metric">
-                <div class="lid-roi-label">Time efficiency</div>
-                <div class="lid-roi-value">{{efficiency_mult}}×</div>
-                <div class="lid-roi-desc">vs. equivalent LMS courseware (~{{lms_hours}}hrs vs {{session_hours}}hrs)</div>
-            </div>
-            <div class="lid-roi-metric">
-                <div class="lid-roi-label">Engagement score</div>
-                <div class="lid-roi-value">{{engagement_score}}%</div>
-                <div class="lid-roi-bars" data-score="{{engagement_score}}" aria-hidden="true"></div>
-            </div>
-            <div class="lid-roi-metric">
-                <div class="lid-roi-label">Retention probability</div>
-                <div class="lid-roi-value">{{retention_pct}}%</div>
-                <div class="lid-roi-desc">vs. 8–10% passive LMS retention</div>
-            </div>
-            <div class="lid-roi-metric">
-                <div class="lid-roi-label">Application readiness</div>
-                <div class="lid-roi-value lid-readiness-{{readiness_color}}">{{application_readiness}}</div>
-                <div class="lid-roi-desc">Immediate applicability to target roles</div>
-            </div>
-            <div class="lid-roi-metric">
-                <div class="lid-roi-label">Employer value index</div>
-                <div class="lid-roi-value">{{employer_value_index}}/10</div>
-                <div class="lid-roi-desc">Competency rarity, depth, AI integration</div>
-            </div>
-        </div>
-        {{/has_roi}}
-
-        {{! ── Discussion value panel (v1.2 only) ────────────────────── }}
-        {{#has_discussion_value}}
-        <div class="lid-panel lid-panel-roi">
-            <div class="lid-panel-title">{{#str}}dashboard_discussion_value, local_lid{{/str}}</div>
-
-            {{! DCI score and band }}
-            {{#has_dci}}
-            <div class="lid-roi-metric">
-                <div class="lid-roi-label">{{#str}}dashboard_dci, local_lid{{/str}}</div>
-                <div class="lid-roi-value lid-cpi-{{dci_color}}">{{dci}}</div>
-                <div class="lid-cpi-bar-bg" style="margin-top:6px">
-                    <div class="lid-cpi-bar-fill lid-comp-{{dci_color}}"
-                         style="width:0"
-                         data-width="{{dci_bar_width}}">
-                    </div>
-                </div>
-                <div class="lid-roi-desc" style="margin-top:4px">
-                    <strong>{{dci_band}}</strong>
-                    {{#dci_description}} — {{dci_description}}{{/dci_description}}
-                </div>
-            </div>
-            {{/has_dci}}
-
-            {{! Participation depth }}
-            <div class="lid-roi-metric">
-                <div class="lid-roi-label">Participation depth</div>
-                <div class="lid-roi-desc" style="margin-top:2px">
-                    <span class="lid-mono" style="font-size:10px">
-                        Volume: <strong>{{depth_volume}}</strong>
-                        <span class="lid-sep">·</span>
-                        Thread breadth: <strong>{{depth_thread_breadth}}</strong>
-                        <span class="lid-sep">·</span>
-                        Depth rating: <strong>{{depth_rating}}</strong>
-                    </span>
-                </div>
-                <div class="lid-roi-desc">
-                    {{depth_session_hours}} hrs of discussion participation
-                </div>
-            </div>
-
-            {{! Retention indicators }}
-            {{#has_retention_indicators}}
-            <div class="lid-roi-metric">
-                <div class="lid-roi-label">{{#str}}dashboard_retention_indicators, local_lid{{/str}}</div>
-                <div style="margin-top:6px">
-                    {{#retention_indicators}}
-                    <div class="lid-mono"
-                         style="font-size:10px;color:var(--lid-muted);
-                                padding:3px 0;border-bottom:1px solid var(--lid-dim)">
-                        {{indicator}}
-                    </div>
-                    {{/retention_indicators}}
-                </div>
-            </div>
-            {{/has_retention_indicators}}
-
-        </div>
-        {{/has_discussion_value}}
-
-    </div>{{! end .lid-main-grid }}
-
-    {{! ── Bottom row ──────────────────────────────────────────────────── }}
-    <div class="lid-bottom-grid">
-
-        {{! Timeline — moved up to appear first in bottom grid }}
+        {{! ── Column 3: Timeline ──────────────────────────────────────── }}
         {{#show_timeline}}
         {{#has_timeline}}
-        <div class="lid-panel">
+        <div class="lid-panel lid-panel-timeline">
             <div class="lid-panel-title">{{#str}}dashboard_timeline, local_lid{{/str}}</div>
             <div class="lid-timeline">
                 {{#timeline}}
@@ -293,6 +304,11 @@
         </div>
         {{/has_timeline}}
         {{/show_timeline}}
+
+    </div>{{! end .lid-main-grid }}
+
+    {{! ── Bottom row ──────────────────────────────────────────────────── }}
+    <div class="lid-bottom-grid">
 
         {{! Employer value (v1.0 / v1.1 only) }}
         {{#has_employer_value}}
