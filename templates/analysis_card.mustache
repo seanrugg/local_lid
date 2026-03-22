@@ -13,7 +13,9 @@
 
       Compact (forum learner tabs):
         Scores (2x2) → CPI → Bloom's (6 across)
-        3-col grid: Radar+DV | Competencies | Timeline
+        2-col grid: Radar | Competencies
+        Full-width: Discussion Value (horizontal)
+        Full-width: Timeline (2-col flow)
         Full-width: Assessment Notes / Instructor Notes
         Meta footer
 }}
@@ -132,13 +134,14 @@
 
     {{! ══════════════════════════════════════════════════════════════════ }}
     {{! ── MAIN CONTENT AREA ────────────────────────────────────────── }}
-    {{! Non-compact and compact share the same HTML blocks but CSS      }}
-    {{! controls whether they flow as 2-col or 3-col via grid rules.    }}
+    {{! Both compact and non-compact now use 2-col Option B layout.     }}
+    {{! Radar in col 1, competencies in col 2.                          }}
+    {{! DV and timeline go full-width below via grid-column: 1 / -1.    }}
     {{! ══════════════════════════════════════════════════════════════════ }}
 
     <div class="lid-main-grid">
 
-        {{! ── Radar + Discussion Value (stacked in col 1 for compact) ── }}
+        {{! ── Radar (col 1) ───────────────────────────────────────────── }}
         <div class="lid-main-col">
 
             {{! Radar chart }}
@@ -155,84 +158,9 @@
             </div>
             {{/has_radar}}
 
-            {{! Discussion value (v1.2) — in col 1 for compact, full-width for non-compact }}
-            {{#has_discussion_value}}
-            <div class="lid-panel lid-panel-dv" style="margin-top:14px">
-                <div class="lid-panel-title">{{#str}}dashboard_discussion_value, local_lid{{/str}}</div>
-
-                <div class="lid-dv-stats">
-                    {{#has_dci}}
-                    <div class="lid-dv-stat">
-                        <div class="lid-roi-label">{{#str}}dashboard_dci, local_lid{{/str}}</div>
-                        <div class="lid-roi-value lid-cpi-{{dci_color}}">{{dci}}</div>
-                        <div class="lid-cpi-bar-bg" style="margin-top:6px">
-                            <div class="lid-cpi-bar-fill lid-comp-{{dci_color}}"
-                                 style="width:0"
-                                 data-width="{{dci_bar_width}}">
-                            </div>
-                        </div>
-                    </div>
-                    {{/has_dci}}
-
-                    <div class="lid-dv-stat">
-                        <div class="lid-roi-label">Participation depth</div>
-                        <div class="lid-roi-value lid-readiness-{{participation_depth_color}}">{{participation_depth}}</div>
-                        {{#dv_session_hours}}
-                        <div class="lid-roi-desc">{{dv_session_hours}} hrs</div>
-                        {{/dv_session_hours}}
-                    </div>
-
-                    {{#has_dci_components}}
-                    <div class="lid-dv-components">
-                        {{#dci_components}}
-                        <div class="lid-dv-comp-row">
-                            <span class="lid-cpi-comp-label" style="font-size:10px">{{label}}</span>
-                            <span class="lid-mono" style="font-size:9px;color:var(--lid-muted)">{{score}}</span>
-                        </div>
-                        {{/dci_components}}
-                    </div>
-                    {{/has_dci_components}}
-                </div>
-            </div>
-            {{/has_discussion_value}}
-
-            {{! ROI (v1.0/v1.1) — in col 1 for compact, full-width for non-compact }}
-            {{#has_roi}}
-            <div class="lid-panel lid-panel-dv" style="margin-top:14px">
-                <div class="lid-panel-title">{{#str}}dashboard_roi, local_lid{{/str}}</div>
-                <div class="lid-dv-stats">
-                    <div class="lid-dv-stat">
-                        <div class="lid-roi-label">Est. knowledge value</div>
-                        <div class="lid-roi-value">${{{knowledge_value}}}</div>
-                    </div>
-                    <div class="lid-dv-stat">
-                        <div class="lid-roi-label">Time efficiency</div>
-                        <div class="lid-roi-value">{{efficiency_mult}}×</div>
-                        <div class="lid-roi-desc">~{{lms_hours}}hrs vs {{session_hours}}hrs</div>
-                    </div>
-                    <div class="lid-dv-stat">
-                        <div class="lid-roi-label">Engagement</div>
-                        <div class="lid-roi-value">{{engagement_score}}%</div>
-                    </div>
-                    <div class="lid-dv-stat">
-                        <div class="lid-roi-label">Retention</div>
-                        <div class="lid-roi-value">{{retention_pct}}%</div>
-                    </div>
-                    <div class="lid-dv-stat">
-                        <div class="lid-roi-label">Readiness</div>
-                        <div class="lid-roi-value lid-readiness-{{readiness_color}}">{{application_readiness}}</div>
-                    </div>
-                    <div class="lid-dv-stat">
-                        <div class="lid-roi-label">EVI</div>
-                        <div class="lid-roi-value">{{employer_value_index}}/10</div>
-                    </div>
-                </div>
-            </div>
-            {{/has_roi}}
-
         </div>{{! end .lid-main-col }}
 
-        {{! ── Competencies ────────────────────────────────────────────── }}
+        {{! ── Competencies (col 2) ────────────────────────────────────── }}
         <div class="lid-panel lid-panel-comps">
             <div class="lid-panel-title">{{#str}}dashboard_competencies, local_lid{{/str}}</div>
             <div class="lid-comp-list">
@@ -264,7 +192,82 @@
             </div>
         </div>
 
-        {{! ── Timeline (col 3 for compact, full-width for non-compact) ── }}
+        {{! ── Discussion value (full-width below radar+comps) ─────────── }}
+        {{#has_discussion_value}}
+        <div class="lid-panel lid-panel-dv">
+            <div class="lid-panel-title">{{#str}}dashboard_discussion_value, local_lid{{/str}}</div>
+
+            <div class="lid-dv-stats">
+                {{#has_dci}}
+                <div class="lid-dv-stat">
+                    <div class="lid-roi-label">{{#str}}dashboard_dci, local_lid{{/str}}</div>
+                    <div class="lid-roi-value lid-cpi-{{dci_color}}">{{dci}}</div>
+                    <div class="lid-cpi-bar-bg" style="margin-top:6px">
+                        <div class="lid-cpi-bar-fill lid-comp-{{dci_color}}"
+                             style="width:0"
+                             data-width="{{dci_bar_width}}">
+                        </div>
+                    </div>
+                </div>
+                {{/has_dci}}
+
+                <div class="lid-dv-stat">
+                    <div class="lid-roi-label">Participation depth</div>
+                    <div class="lid-roi-value lid-readiness-{{participation_depth_color}}">{{participation_depth}}</div>
+                    {{#dv_session_hours}}
+                    <div class="lid-roi-desc">{{dv_session_hours}} hrs</div>
+                    {{/dv_session_hours}}
+                </div>
+
+                {{#has_dci_components}}
+                <div class="lid-dv-components">
+                    {{#dci_components}}
+                    <div class="lid-dv-comp-row">
+                        <span class="lid-cpi-comp-label" style="font-size:10px">{{label}}</span>
+                        <span class="lid-mono" style="font-size:9px;color:var(--lid-muted)">{{score}}</span>
+                    </div>
+                    {{/dci_components}}
+                </div>
+                {{/has_dci_components}}
+            </div>
+        </div>
+        {{/has_discussion_value}}
+
+        {{! ── ROI (v1.0/v1.1 — full-width below radar+comps) ─────────── }}
+        {{#has_roi}}
+        <div class="lid-panel lid-panel-dv">
+            <div class="lid-panel-title">{{#str}}dashboard_roi, local_lid{{/str}}</div>
+            <div class="lid-dv-stats">
+                <div class="lid-dv-stat">
+                    <div class="lid-roi-label">Est. knowledge value</div>
+                    <div class="lid-roi-value">${{{knowledge_value}}}</div>
+                </div>
+                <div class="lid-dv-stat">
+                    <div class="lid-roi-label">Time efficiency</div>
+                    <div class="lid-roi-value">{{efficiency_mult}}×</div>
+                    <div class="lid-roi-desc">~{{lms_hours}}hrs vs {{session_hours}}hrs</div>
+                </div>
+                <div class="lid-dv-stat">
+                    <div class="lid-roi-label">Engagement</div>
+                    <div class="lid-roi-value">{{engagement_score}}%</div>
+                </div>
+                <div class="lid-dv-stat">
+                    <div class="lid-roi-label">Retention</div>
+                    <div class="lid-roi-value">{{retention_pct}}%</div>
+                </div>
+                <div class="lid-dv-stat">
+                    <div class="lid-roi-label">Readiness</div>
+                    <div class="lid-roi-value lid-readiness-{{readiness_color}}">{{application_readiness}}</div>
+                </div>
+                <div class="lid-dv-stat">
+                    <div class="lid-roi-label">EVI</div>
+                    <div class="lid-roi-value">{{employer_value_index}}/10</div>
+                </div>
+            </div>
+        </div>
+        {{/has_roi}}
+
+        {{! ── Timeline (full-width below DV) ──────────────────────────── }}
         {{#show_timeline}}
         {{#has_timeline}}
         <div class="lid-panel lid-panel-timeline">
