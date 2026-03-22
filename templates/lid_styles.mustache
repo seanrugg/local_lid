@@ -1,6 +1,5 @@
 <style>
 /* ── Google Fonts (Bebas Neue + DM Sans + DM Mono) ─────────────── */
-/* @import must be the first rule in a style block */
 @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap');
 
 /* ── Custom properties ─────────────────────────────────────────── */
@@ -315,13 +314,20 @@
 .lid-score-orange .lid-score-value { color: var(--lid-warn); }
 .lid-score-sub { font-size: 10px; color: var(--lid-muted); margin-top: 4px; }
 
-/* Main grid */
+/* ── Main grid — 3 equal columns ──────────────────────────────── */
 .lid-main-grid {
     display: grid;
-    grid-template-columns: 1fr 1fr 300px;
+    grid-template-columns: 1fr 1fr 1fr;
     gap: 14px;
     margin-bottom: 14px;
+    align-items: start;
 }
+/* Column 1 wrapper — stacks radar + discussion value vertically */
+.lid-main-col {
+    display: flex;
+    flex-direction: column;
+}
+
 .lid-panel {
     background: var(--lid-surface);
     border: 1px solid var(--lid-border);
@@ -343,12 +349,12 @@
 .lid-panel-title::after { content: ''; flex: 1; height: 1px; background: var(--lid-border); }
 
 /* Radar */
-.lid-panel-radar { grid-column: 1; }
+.lid-panel-radar { }
 .lid-radar-container { display: flex; justify-content: center; padding: 4px 0; }
 .lid-radar-canvas    { display: block; }
 
 /* Competency bars */
-.lid-panel-comps { grid-column: 2; }
+.lid-panel-comps { }
 .lid-comp-list   { display: flex; flex-direction: column; gap: 12px; }
 .lid-comp-item   {}
 .lid-comp-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
@@ -367,7 +373,6 @@
 .lid-comp-meta   { font-size: 9px; color: var(--lid-muted); margin-top: 2px; letter-spacing: 0.8px; text-transform: uppercase; }
 
 /* ROI panel */
-.lid-panel-roi    { grid-column: 3; grid-row: 1 / 3; }
 .lid-roi-metric   { padding: 11px 0; border-bottom: 1px solid var(--lid-border); }
 .lid-roi-metric:last-child { border-bottom: none; }
 .lid-roi-label    { font-size: 9px; text-transform: uppercase; letter-spacing: 1.5px; color: var(--lid-muted); font-family: 'DM Mono', monospace; margin-bottom: 4px; }
@@ -379,8 +384,11 @@
 .lid-readiness-info    { color: var(--lid-accent); }
 .lid-readiness-secondary { color: var(--lid-muted); }
 
-/* Bloom's grid — always 6 across, full-height cards showing all text */
-.lid-panel-blooms  { grid-column: 1 / -1; }
+/* Timeline panel — in column 3 of main grid */
+.lid-panel-timeline { }
+
+/* Bloom's grid — always 6 across, full-height cards */
+.lid-panel-blooms  { }
 .lid-blooms-grid   { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; }
 .lid-bloom-card {
     background: var(--lid-surface2);
@@ -570,27 +578,20 @@
 .lid-card-compact .lid-score-row    { grid-template-columns: repeat(2, 1fr); gap: 8px; margin-bottom: 12px; }
 .lid-card-compact .lid-score-value  { font-size: 28px; }
 .lid-card-compact .lid-score-card   { padding: 10px; }
-.lid-card-compact .lid-main-grid    { grid-template-columns: 1fr 1fr; gap: 10px; }
-.lid-card-compact .lid-panel-roi    { grid-column: 1 / 3; grid-row: auto; }
-.lid-card-compact .lid-panel-blooms { grid-column: 1 / -1; }
-/* Bloom's stays 6 across even in compact — consistent everywhere */
+.lid-card-compact .lid-main-grid    { grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
 .lid-card-compact .lid-blooms-grid  { grid-template-columns: repeat(6, 1fr); }
 .lid-card-compact .lid-bottom-grid  { grid-template-columns: 1fr; gap: 10px; }
 
 /* ── Responsive ─────────────────────────────────────────────────── */
 @media (max-width: 1100px) {
-    .lid-main-grid  { grid-template-columns: 1fr 1fr; }
-    .lid-panel-roi  { grid-column: 1 / 3; grid-row: auto; }
-    .lid-panel-blooms { grid-column: 1 / -1; }
-    /* Bloom's stays 6 across at medium widths */
+    .lid-main-grid    { grid-template-columns: 1fr 1fr; }
+    .lid-panel-timeline { grid-column: 1 / -1; }
     .lid-blooms-grid  { grid-template-columns: repeat(6, 1fr); }
     .lid-bottom-grid  { grid-template-columns: 1fr 1fr; }
 }
 @media (max-width: 700px) {
     .lid-score-row    { grid-template-columns: 1fr 1fr; }
     .lid-main-grid    { grid-template-columns: 1fr; }
-    .lid-panel-roi, .lid-panel-blooms { grid-column: 1; }
-    /* Only collapse Bloom's to 3 across on mobile */
     .lid-blooms-grid  { grid-template-columns: repeat(3, 1fr); }
     .lid-bottom-grid  { grid-template-columns: 1fr; }
     .lid-forum-tabs   { flex-direction: column; }
