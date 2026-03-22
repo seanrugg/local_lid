@@ -178,14 +178,6 @@
                     <a href="{{student_url}}" class="lid-btn lid-btn-secondary" style="font-size:10px">
                         {{#str}}dashboard_forum_viewlearner, local_lid{{/str}}
                     </a>
-                    {{#threads}}
-                    <button class="lid-btn lid-btn-ghost lid-js-toggle-posts"
-                            aria-expanded="false"
-                            aria-controls="lid-threads-{{userid}}"
-                            data-target="lid-threads-{{userid}}">
-                        ▼ {{#str}}dashboard_forum_thread_heading, local_lid{{/str}}
-                    </button>
-                    {{/threads}}
                 </div>
             </div>
 
@@ -203,32 +195,6 @@
             {{/is_pending}}
             {{/has_student_lid}}
 
-            {{! Thread cards accordion — collapsed by default }}
-            {{#threads}}
-            <div class="lid-student-posts lid-student-posts-hidden"
-                 id="lid-threads-{{userid}}">
-
-                {{#threads}}
-                <div class="lid-post-row">
-                    <div class="lid-post-header">
-                        <div class="lid-post-info">
-                            <span class="lid-post-subject">{{thread_name}}</span>
-                        </div>
-                        <div class="lid-post-actions">
-                            {{{status_html}}}
-                        </div>
-                    </div>
-                    {{#has_analysis}}
-                    <div class="lid-post-card-wrapper">
-                        {{{thread_html}}}
-                    </div>
-                    {{/has_analysis}}
-                </div>
-                {{/threads}}
-
-            </div>
-            {{/threads}}
-
         </div>{{! end .lid-student-row }}
 
     </div>{{! end per-learner panel }}
@@ -240,22 +206,12 @@
 
 {{! ── Learner tab styling ────────────────────────────────────────────── }}
 <style>
-/* Scrollable tab bar for many learners */
+/* Wrapping tab bar for learner tabs */
 .lid-forum-tabs {
     display: flex;
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
+    flex-wrap: wrap;
     gap: 2px;
     padding-bottom: 2px;
-    scrollbar-width: thin;
-}
-.lid-forum-tabs::-webkit-scrollbar {
-    height: 4px;
-}
-.lid-forum-tabs::-webkit-scrollbar-thumb {
-    background: var(--lid-border, #333);
-    border-radius: 2px;
 }
 
 /* Learner tab compact styling */
