@@ -103,7 +103,7 @@
 
     {{#lid_enabled}}
 
-    {{! ── View tabs ───────────────────────────────────────────────────── }}
+    {{! ── View tabs: aggregate + one per learner ─────────────────────── }}
     <div class="lid-forum-tabs" id="lid-forum-tabs" role="tablist">
         <button class="lid-forum-tab lid-forum-tab-active"
                 role="tab" aria-selected="true"
@@ -111,15 +111,21 @@
                 data-target="lid-forum-aggregate">
             {{#str}}dashboard_forum_aggregate, local_lid{{/str}}
         </button>
-        <button class="lid-forum-tab"
+        {{#students}}
+        <button class="lid-forum-tab lid-forum-tab-learner"
                 role="tab" aria-selected="false"
-                aria-controls="lid-forum-learners"
-                data-target="lid-forum-learners">
-            {{#str}}dashboard_forum_learners, local_lid{{/str}}
-            {{#students}}
-            <span class="lid-tab-count">{{post_count}}</span>
-            {{/students}}
+                aria-controls="lid-learner-panel-{{userid}}"
+                data-target="lid-learner-panel-{{userid}}"
+                title="{{fullname}} · {{post_count}} posts{{#cpi_score}} · CPI {{cpi_score}}{{/cpi_score}}">
+            <span class="lid-tab-learner-name">{{fullname}}</span>
+            {{#cpi_score}}
+            <span class="lid-tab-cpi lid-tab-cpi-{{cpi_band}}">{{cpi_score}}</span>
+            {{/cpi_score}}
+            {{^cpi_score}}
+            <span class="lid-tab-cpi lid-tab-cpi-none">–</span>
+            {{/cpi_score}}
         </button>
+        {{/students}}
     </div>
 
     {{! ── Forum aggregate panel ──────────────────────────────────────── }}
@@ -134,16 +140,10 @@
         {{/has_aggregate}}
     </div>
 
-    {{! ── Learner contributions panel ───────────────────────────────── }}
-    <div class="lid-tab-panel lid-tab-panel-hidden" id="lid-forum-learners" role="tabpanel">
+    {{! ── Per-learner panels (one per student, hidden by default) ──── }}
+    {{#students}}
+    <div class="lid-tab-panel lid-tab-panel-hidden" id="lid-learner-panel-{{userid}}" role="tabpanel">
 
-        {{^students}}
-        <div class="lid-notice lid-notice-info">
-            {{#str}}dashboard_forum_noposts, local_lid{{/str}}
-        </div>
-        {{/students}}
-
-        {{#students}}
         <div class="lid-student-row" id="lid-student-{{userid}}">
 
             <div class="lid-student-header">
@@ -230,10 +230,71 @@
             {{/threads}}
 
         </div>{{! end .lid-student-row }}
-        {{/students}}
 
-    </div>{{! end learners panel }}
+    </div>{{! end per-learner panel }}
+    {{/students}}
 
     {{/lid_enabled}}
 
 </div>
+
+{{! ── Learner tab styling ────────────────────────────────────────────── }}
+<style>
+/* Scrollable tab bar for many learners */
+.lid-forum-tabs {
+    display: flex;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    gap: 2px;
+    padding-bottom: 2px;
+    scrollbar-width: thin;
+}
+.lid-forum-tabs::-webkit-scrollbar {
+    height: 4px;
+}
+.lid-forum-tabs::-webkit-scrollbar-thumb {
+    background: var(--lid-border, #333);
+    border-radius: 2px;
+}
+
+/* Learner tab compact styling */
+.lid-forum-tab-learner {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    max-width: 180px;
+    white-space: nowrap;
+    padding: 6px 10px;
+    font-size: 11px;
+}
+.lid-tab-learner-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 120px;
+    display: inline-block;
+}
+.lid-tab-cpi {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    font-weight: 700;
+    min-width: 28px;
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-family: var(--lid-font-mono, 'JetBrains Mono', monospace);
+}
+.lid-tab-cpi-exceptional { background: var(--lid-accent, #00e5c8); color: #0a0e14; }
+.lid-tab-cpi-advanced    { background: #7c3aed; color: #fff; }
+.lid-tab-cpi-progressing { background: #2563eb; color: #fff; }
+.lid-tab-cpi-developing  { background: var(--lid-surface2, #1a1f2a); color: var(--lid-muted, #6b7280); border: 1px solid var(--lid-border, #333); }
+.lid-tab-cpi-foundational { background: var(--lid-surface2, #1a1f2a); color: var(--lid-muted, #6b7280); border: 1px solid var(--lid-border, #333); }
+.lid-tab-cpi-none        { background: transparent; color: var(--lid-muted, #6b7280); font-size: 9px; }
+
+/* Active learner tab highlight */
+.lid-forum-tab-learner.lid-forum-tab-active {
+    border-bottom-color: var(--lid-accent, #00e5c8);
+}
+</style>
