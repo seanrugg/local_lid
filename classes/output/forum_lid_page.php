@@ -274,7 +274,7 @@ class forum_lid_page implements \renderable, \templatable {
                 if ($trow && $trow->status === 'complete' && !empty($trow->analysis_json)) {
                     $threadhtml = $output->render_analysis_card(
                         $trow->analysis_json,
-                        ['compact' => true, 'show_portfolio' => false, 'show_timeline' => false]
+                        ['compact' => true, 'show_portfolio' => false, 'show_timeline' => true]
                     );
                 }
 
