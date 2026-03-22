@@ -192,8 +192,8 @@ class renderer extends \plugin_renderer_base {
             $discussionvalue    = $this->prepare_discussion_value($data['discussion_value'] ?? []);
             $employervalue      = [];
             $hasemployervalue   = false;
-            $instructornotes    = $data['instructor_notes'] ?? '';
-            $hasinstructornotes = !empty($instructornotes);
+            $instructornotes    = $this->prepare_instructor_notes($data['instructor_notes'] ?? []);
+            $hasinstructornotes = !empty($data['instructor_notes']);
             $hasportfolio       = false;
             $portfoliodata      = $this->empty_portfolio_block();
         } else {
@@ -202,14 +202,14 @@ class renderer extends \plugin_renderer_base {
             $discussionvalue    = $this->empty_discussion_value_block();
             $employervalue      = $data['employer_value'] ?? [];
             $hasemployervalue   = !empty($employervalue);
-            $instructornotes    = '';
+            $instructornotes    = $this->empty_instructor_notes_block();
             $hasinstructornotes = false;
             $hasportfolio       = !empty($data['portfolio']['title']);
             $portfoliodata      = [
-                'portfolio_title'   => format_string($data['portfolio']['title']    ?? ''),
+                'portfolio_title'    => format_string($data['portfolio']['title']   ?? ''),
                 'portfolio_subtitle' => $data['portfolio']['subtitle']              ?? '',
-                'portfolio_tags'    => $this->prepare_tags($data['portfolio']['primary_tags'] ?? []),
-                'portfolio_formats' => $data['portfolio']['documentation_formats']  ?? [],
+                'portfolio_tags'     => $this->prepare_tags($data['portfolio']['primary_tags'] ?? []),
+                'portfolio_formats'  => $data['portfolio']['documentation_formats'] ?? [],
             ];
         }
 
@@ -231,49 +231,51 @@ class renderer extends \plugin_renderer_base {
             'session_tags'        => $this->prepare_tags($session['tags']    ?? []),
 
             // Scores block.
-            'cognitive_depth'     => (int) ($scores['cognitive_depth_score']   ?? 0),
-            'strategic_thinking'  => (int) ($scores['strategic_thinking_pct']  ?? 0),
-            'roi_awareness'       => (int) ($scores['roi_awareness_pct']        ?? 0),
-            'engagement_score'    => (int) ($scores['engagement_score']         ?? 0),
-            'meta_cognition'      => (int) ($scores['meta_cognition_score']     ?? 0),
-            'domains_count'       => (int) ($scores['competency_domains_count'] ?? 0),
+            'cognitive_depth'    => (int) ($scores['cognitive_depth_score']    ?? 0),
+            'strategic_thinking' => (int) ($scores['strategic_thinking_pct']   ?? 0),
+            'roi_awareness'      => (int) ($scores['roi_awareness_pct']         ?? 0),
+            'engagement_score'   => (int) ($scores['engagement_score']          ?? 0),
+            'meta_cognition'     => (int) ($scores['meta_cognition_score']      ?? 0),
+            'domains_count'      => (int) ($scores['competency_domains_count']  ?? 0),
+            // v1.2 adds critical_discourse_score.
+            'critical_discourse' => (int) ($scores['critical_discourse_score']  ?? 0),
 
             // Competencies.
-            'competencies'        => $this->prepare_competencies($competencies),
+            'competencies'       => $this->prepare_competencies($competencies),
 
             // Radar.
-            'radar_axes_json'     => json_encode($radaraxes),
-            'has_radar'           => !empty($radaraxes),
+            'radar_axes_json'    => json_encode($radaraxes),
+            'has_radar'          => !empty($radaraxes),
 
             // Bloom's.
-            'blooms_progression'  => $bloomsprogression,
+            'blooms_progression' => $bloomsprogression,
 
             // Schema-branched blocks.
             'has_roi'                => !$isv12,
             'has_discussion_value'   => $isv12,
             'employer_value'         => $employervalue,
             'has_employer_value'     => $hasemployervalue,
-            'instructor_notes'       => $instructornotes,
             'has_instructor_notes'   => $hasinstructornotes,
             'has_portfolio'          => $hasportfolio,
 
             // Timeline.
-            'timeline'            => $data['timeline'] ?? [],
-            'has_timeline'        => !empty($data['timeline']),
+            'timeline'           => $data['timeline'] ?? [],
+            'has_timeline'       => !empty($data['timeline']),
 
             // Meta.
-            'meta_generated_by'   => $meta['generated_by'] ?? '',
-            'meta_generated_at'   => $meta['generated_at'] ?? '',
-            'meta_confidence'     => $meta['confidence']   ?? '',
-            'meta_notes'          => $meta['notes']        ?? '',
-            'has_meta_notes'      => !empty($meta['notes']),
-            'confidence_high'     => ($meta['confidence'] ?? '') === 'HIGH',
-            'confidence_medium'   => ($meta['confidence'] ?? '') === 'MEDIUM',
-            'confidence_low'      => ($meta['confidence'] ?? '') === 'LOW',
+            'meta_generated_by'  => $meta['generated_by'] ?? '',
+            'meta_generated_at'  => $meta['generated_at'] ?? '',
+            'meta_confidence'    => $meta['confidence']   ?? '',
+            'meta_notes'         => $meta['notes']        ?? '',
+            'has_meta_notes'     => !empty($meta['notes']),
+            'confidence_high'    => ($meta['confidence'] ?? '') === 'HIGH',
+            'confidence_medium'  => ($meta['confidence'] ?? '') === 'MEDIUM',
+            'confidence_low'     => ($meta['confidence'] ?? '') === 'LOW',
 
         ] + $portfoliodata
           + $roiblock
           + $discussionvalue
+          + $instructornotes
           + $this->prepare_cpi_data($data['cognitive_performance_index'] ?? null, $isv12);
     }
 
@@ -294,14 +296,14 @@ class renderer extends \plugin_renderer_base {
         $readinesscolor = $readinesscolors[$readiness] ?? 'secondary';
 
         return [
-            'knowledge_value'       => number_format((int)   ($roi['knowledge_value_usd']          ?? 0)),
-            'efficiency_mult'       => number_format((float) ($roi['time_efficiency_multiplier']    ?? 0), 1),
-            'retention_pct'         => (int) ($roi['retention_probability_pct']                    ?? 0),
+            'knowledge_value'       => number_format((int)   ($roi['knowledge_value_usd']       ?? 0)),
+            'efficiency_mult'       => number_format((float) ($roi['time_efficiency_multiplier'] ?? 0), 1),
+            'retention_pct'         => (int) ($roi['retention_probability_pct']                  ?? 0),
             'application_readiness' => $readiness,
             'readiness_color'       => $readinesscolor,
-            'employer_value_index'  => number_format((float) ($roi['employer_value_index']          ?? 0), 1),
-            'lms_hours'             => number_format((float) ($roi['lms_equivalent_hours']          ?? 0), 1),
-            'session_hours'         => number_format((float) ($roi['session_hours']                 ?? 0), 1),
+            'employer_value_index'  => number_format((float) ($roi['employer_value_index']       ?? 0), 1),
+            'lms_hours'             => number_format((float) ($roi['lms_equivalent_hours']       ?? 0), 1),
+            'session_hours'         => number_format((float) ($roi['session_hours']              ?? 0), 1),
         ];
     }
 
@@ -326,56 +328,99 @@ class renderer extends \plugin_renderer_base {
     /**
      * Prepare discussion_value block fields for v1.2 cards.
      *
-     * Schema v1.2 discussion_value structure:
-     *   dci                  float  — Discussion Contribution Index (0–100)
-     *   dci_band             string — 'Minimal'|'Emerging'|'Contributing'|'Leading'
-     *   dci_description      string
-     *   participation_depth  object
-     *     volume             string — 'LOW'|'MEDIUM'|'HIGH'
-     *     session_hours      float
-     *     thread_breadth     string — 'LOW'|'MEDIUM'|'HIGH'
-     *     depth_rating       string — 'LOW'|'MEDIUM'|'HIGH'
-     *   retention_indicators array  — strings
+     * Maps the actual v1.2 schema structure:
+     *
+     *   discussion_value.application_readiness  string  LOW|MEDIUM|HIGH|EXCEPTIONAL
+     *   discussion_value.participation_depth    string  LOW|MEDIUM|HIGH  (scalar)
+     *   discussion_value.session_hours          float
+     *   discussion_value.discussion_contribution_index  float 0.0–10.0
+     *   discussion_value.dci_components         object  {idea_originality, reasoning_transparency,
+     *                                                    peer_advancement, critical_challenge,
+     *                                                    knowledge_integration}
+     *   discussion_value.retention_indicators   object  {label, factors_present, factors_absent}
      *
      * @param  array $dv  Decoded discussion_value block.
      * @return array
      */
     private function prepare_discussion_value(array $dv): array {
-        $dci     = (float) ($dv['dci']         ?? 0);
-        $band    = $dv['dci_band']              ?? '';
-        $desc    = $dv['dci_description']       ?? '';
-        $depth   = $dv['participation_depth']   ?? [];
-        $indicators = $dv['retention_indicators'] ?? [];
+        $dci            = (float) ($dv['discussion_contribution_index'] ?? 0);
+        $depth          = (string) ($dv['participation_depth']          ?? '');
+        $readiness      = strtoupper($dv['application_readiness']       ?? 'LOW');
+        $sessionhours   = (float) ($dv['session_hours']                 ?? 0);
+        $dcicomponents  = $dv['dci_components']                         ?? [];
+        $retentionblock = $dv['retention_indicators']                   ?? [];
 
-        $bandcolors = [
-            'Minimal'      => 'muted',
-            'Emerging'     => 'orange',
-            'Contributing' => 'cyan',
-            'Leading'      => 'green',
+        $readinesscolors = [
+            'LOW'         => 'secondary',
+            'MEDIUM'      => 'warning',
+            'HIGH'        => 'success',
+            'EXCEPTIONAL' => 'info',
         ];
-        $dcicolor = $bandcolors[$band] ?? 'muted';
-
-        // Map 0–100 DCI to a bar width, clamped.
-        $dcibarwidth = max(0, min(100, (int) round($dci)));
-
+        $depthcolors = [
+            'LOW'    => 'secondary',
+            'MEDIUM' => 'warning',
+            'HIGH'   => 'success',
+        ];
         $depthlevels = ['LOW' => 1, 'MEDIUM' => 2, 'HIGH' => 3];
 
+        // DCI bar — scale 0–10 to 0–100.
+        $dcibarwidth = max(0, min(100, (int) round($dci * 10)));
+
+        // Retention indicators — factors_present as array of {factor, evidence}.
+        $factorspresent = [];
+        if (is_array($retentionblock['factors_present'] ?? null)) {
+            foreach ($retentionblock['factors_present'] as $fp) {
+                if (is_array($fp)) {
+                    $factorspresent[] = [
+                        'factor'   => format_string($fp['factor']   ?? ''),
+                        'evidence' => format_string($fp['evidence'] ?? ''),
+                    ];
+                }
+            }
+        }
+
+        $factorsabsent = [];
+        if (is_array($retentionblock['factors_absent'] ?? null)) {
+            foreach ($retentionblock['factors_absent'] as $fa) {
+                $factorsabsent[] = ['factor' => format_string((string) $fa)];
+            }
+        }
+
+        // DCI component bars — each 0.0–2.0 scaled to 0–100 bar width.
+        $dcicomponentrows = [];
+        $componentlabels  = [
+            'idea_originality'      => 'Idea originality',
+            'reasoning_transparency' => 'Reasoning transparency',
+            'peer_advancement'      => 'Peer advancement',
+            'critical_challenge'    => 'Critical challenge',
+            'knowledge_integration' => 'Knowledge integration',
+        ];
+        foreach ($componentlabels as $key => $label) {
+            $val = (float) ($dcicomponents[$key] ?? 0);
+            $dcicomponentrows[] = [
+                'label'     => $label,
+                'score'     => number_format($val, 1),
+                'bar_width' => max(0, min(100, (int) round($val * 50))), // 2.0 max → 100%
+            ];
+        }
+
         return [
-            'dci'                     => number_format($dci, 1),
-            'dci_band'                => $band,
-            'dci_description'         => $desc,
-            'dci_color'               => $dcicolor,
-            'dci_bar_width'           => $dcibarwidth,
-            'has_dci'                 => ($dci > 0 || !empty($band)),
-            'depth_volume'            => strtoupper($depth['volume']        ?? ''),
-            'depth_session_hours'     => number_format((float) ($depth['session_hours'] ?? 0), 1),
-            'depth_thread_breadth'    => strtoupper($depth['thread_breadth'] ?? ''),
-            'depth_rating'            => strtoupper($depth['depth_rating']  ?? ''),
-            'depth_volume_level'      => $depthlevels[strtoupper($depth['volume']        ?? '')] ?? 0,
-            'depth_breadth_level'     => $depthlevels[strtoupper($depth['thread_breadth'] ?? '')] ?? 0,
-            'depth_rating_level'      => $depthlevels[strtoupper($depth['depth_rating']  ?? '')] ?? 0,
-            'retention_indicators'    => array_map(fn($s) => ['indicator' => $s], $indicators),
-            'has_retention_indicators' => !empty($indicators),
+            'dci'                       => number_format($dci, 1),
+            'dci_bar_width'             => $dcibarwidth,
+            'has_dci'                   => true,
+            'dci_components'            => $dcicomponentrows,
+            'has_dci_components'        => !empty($dcicomponentrows),
+            'participation_depth'       => strtoupper($depth),
+            'participation_depth_level' => $depthlevels[strtoupper($depth)] ?? 0,
+            'participation_depth_color' => $depthcolors[strtoupper($depth)] ?? 'secondary',
+            'application_readiness'     => $readiness,
+            'readiness_color'           => $readinesscolors[$readiness] ?? 'secondary',
+            'dv_session_hours'          => number_format($sessionhours, 1),
+            'retention_label'           => format_string($retentionblock['label'] ?? 'Discussion Engagement Indicators'),
+            'retention_factors_present' => $factorspresent,
+            'retention_factors_absent'  => $factorsabsent,
+            'has_retention_present'     => !empty($factorspresent),
+            'has_retention_absent'      => !empty($factorsabsent),
         ];
     }
 
@@ -386,21 +431,82 @@ class renderer extends \plugin_renderer_base {
      */
     private function empty_discussion_value_block(): array {
         return [
-            'dci'                      => '0.0',
-            'dci_band'                 => '',
-            'dci_description'          => '',
-            'dci_color'                => 'muted',
-            'dci_bar_width'            => 0,
-            'has_dci'                  => false,
-            'depth_volume'             => '',
-            'depth_session_hours'      => '0.0',
-            'depth_thread_breadth'     => '',
-            'depth_rating'             => '',
-            'depth_volume_level'       => 0,
-            'depth_breadth_level'      => 0,
-            'depth_rating_level'       => 0,
-            'retention_indicators'     => [],
-            'has_retention_indicators' => false,
+            'dci'                       => '0.0',
+            'dci_bar_width'             => 0,
+            'has_dci'                   => false,
+            'dci_components'            => [],
+            'has_dci_components'        => false,
+            'participation_depth'       => '',
+            'participation_depth_level' => 0,
+            'participation_depth_color' => 'secondary',
+            'application_readiness'     => 'LOW',
+            'readiness_color'           => 'secondary',
+            'dv_session_hours'          => '0.0',
+            'retention_label'           => '',
+            'retention_factors_present' => [],
+            'retention_factors_absent'  => [],
+            'has_retention_present'     => false,
+            'has_retention_absent'      => false,
+        ];
+    }
+
+    /**
+     * Prepare instructor_notes block for v1.2 cards.
+     *
+     * Expands the instructor_notes object into scalar and array template
+     * variables. All string fields are passed through format_string() to
+     * prevent htmlspecialchars() from receiving an array.
+     *
+     * v1.2 instructor_notes structure:
+     *   participation_summary  string
+     *   standout_moments       array  [{type, observation}]
+     *   growth_indicators      string
+     *   constructive_feedback  string
+     *
+     * @param  array|string $notes  Decoded instructor_notes value (array expected for v1.2).
+     * @return array
+     */
+    private function prepare_instructor_notes($notes): array {
+        // Guard: if somehow a string was passed, wrap it safely.
+        if (!is_array($notes)) {
+            return $this->empty_instructor_notes_block();
+        }
+
+        $standoutmoments = [];
+        foreach ($notes['standout_moments'] ?? [] as $moment) {
+            if (!is_array($moment)) {
+                continue;
+            }
+            $type = (string) ($moment['type'] ?? '');
+            $standoutmoments[] = [
+                'type'            => format_string($type),
+                'observation'     => format_string((string) ($moment['observation'] ?? '')),
+                'is_strength'     => ($type === 'Strength'),
+                'is_growth'       => ($type === 'Growth Opportunity'),
+            ];
+        }
+
+        return [
+            'instructor_participation_summary' => format_string((string) ($notes['participation_summary']  ?? '')),
+            'instructor_standout_moments'      => $standoutmoments,
+            'instructor_has_standout_moments'  => !empty($standoutmoments),
+            'instructor_growth_indicators'     => format_string((string) ($notes['growth_indicators']      ?? '')),
+            'instructor_constructive_feedback' => format_string((string) ($notes['constructive_feedback']  ?? '')),
+        ];
+    }
+
+    /**
+     * Return safe empty instructor_notes defaults for v1.0/v1.1 cards.
+     *
+     * @return array
+     */
+    private function empty_instructor_notes_block(): array {
+        return [
+            'instructor_participation_summary' => '',
+            'instructor_standout_moments'      => [],
+            'instructor_has_standout_moments'  => false,
+            'instructor_growth_indicators'     => '',
+            'instructor_constructive_feedback' => '',
         ];
     }
 
@@ -420,25 +526,6 @@ class renderer extends \plugin_renderer_base {
 
     /**
      * Prepare Cognitive Performance Index data for the template.
-     *
-     * Supports both v1.1 (session analyzer) and v1.2 (forum discussion analyzer)
-     * CPI component weight sets. The $isv12 flag switches the default weights
-     * when component_weights is absent from the JSON.
-     *
-     * v1.1 default component weights:
-     *   cognitive_depth 0.35 / meta_cognition 0.25 / strategic_thinking 0.20
-     *   engagement 0.15 / roi_awareness 0.05
-     *
-     * v1.2 default component weights (critical_discourse replaces roi_awareness):
-     *   cognitive_depth 0.35 / critical_discourse 0.25 / strategic_thinking 0.20
-     *   engagement 0.15 / meta_cognition 0.05
-     *
-     * Band colors map to the dashboard accent palette:
-     *   Foundational → muted   (gray)
-     *   Developing   → orange
-     *   Proficient   → cyan
-     *   Advanced     → purple
-     *   Exceptional  → green
      *
      * @param  array|null $cpi    Decoded cognitive_performance_index block, or null.
      * @param  bool       $isv12  True if rendering a v1.2 record.
@@ -480,7 +567,6 @@ class renderer extends \plugin_renderer_base {
         ];
         $color = $bandcolors[$band] ?? 'muted';
 
-        // Component labels and default weights differ between v1.1 and v1.2.
         if ($isv12) {
             $componentlabels = [
                 'cognitive_depth'    => 'Cognitive depth',
@@ -533,8 +619,8 @@ class renderer extends \plugin_renderer_base {
             'has_cpi'              => true,
             'cpi_score'            => $score,
             'cpi_band'             => $band,
-            'cpi_band_description' => $cpi['cpi_band_description'] ?? '',
-            'cpi_calculation_note' => $cpi['calculation_note']     ?? '',
+            'cpi_band_description' => format_string((string) ($cpi['cpi_band_description'] ?? '')),
+            'cpi_calculation_note' => format_string((string) ($cpi['calculation_note']     ?? '')),
             'cpi_bar_width'        => $barwidth,
             'cpi_color'            => $color,
             'cpi_is_exceptional'   => $band === 'Exceptional',
@@ -562,16 +648,16 @@ class renderer extends \plugin_renderer_base {
             }
         }
         $bloomdefaults = [
-            1 => ['label' => 'Remember',  'icon' => '📖'],
-            2 => ['label' => 'Understand', 'icon' => '💡'],
-            3 => ['label' => 'Apply',      'icon' => '🔧'],
-            4 => ['label' => 'Analyze',    'icon' => '🔍'],
-            5 => ['label' => 'Evaluate',   'icon' => '⚖️'],
-            6 => ['label' => 'Create',     'icon' => '🏗️'],
+            1 => ['label' => 'Remember',   'icon' => '📖'],
+            2 => ['label' => 'Understand',  'icon' => '💡'],
+            3 => ['label' => 'Apply',       'icon' => '🔧'],
+            4 => ['label' => 'Analyze',     'icon' => '🔍'],
+            5 => ['label' => 'Evaluate',    'icon' => '⚖️'],
+            6 => ['label' => 'Create',      'icon' => '🏗️'],
         ];
         $result = [];
         for ($l = 1; $l <= 6; $l++) {
-            $entry = $bloomsmap[$l] ?? [];
+            $entry  = $bloomsmap[$l] ?? [];
             $active = (int) ($entry['dots_active'] ?? 0);
             $result[] = [
                 'level'       => $l,
