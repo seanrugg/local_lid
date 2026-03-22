@@ -327,7 +327,7 @@ class student_lid_page implements \renderable, \templatable {
         }
 
         $aggregator = new \local_lid\analysis\aggregator();
-        $merged     = $aggregator->merge_decoded_posts($decoded, $courseid, null, $userid);
+        $merged     = $aggregator->merge_decoded($decoded, $courseid, null, $userid);
 
         if (!$merged) {
             return '';
