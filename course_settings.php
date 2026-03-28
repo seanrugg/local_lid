@@ -15,7 +15,8 @@
 // along with Moodle.  If not, see <https://www.gnu.org/licenses/>.
 
 /**
- * Course-level LID settings page — bulk enable/disable for all forums.
+ * Course-level LID settings page — bulk enable/disable, competency toggle,
+ * and read-only prompt display.
  *
  * Entry point: Course administration → Learning Intelligence settings
  * Injected into course admin navigation by local_lid_extend_navigation_course()
@@ -53,7 +54,10 @@ $PAGE->navbar->add(
 );
 $PAGE->navbar->add(get_string('nav_coursesettings', 'local_lid'));
 
-// Handle bulk enable/disable POST actions.
+// =========================================================================
+// Handle POST actions
+// =========================================================================
+
 $updated = 0;
 if ($action && confirm_sesskey()) {
     $forcedisabled = (bool) get_config('local_lid', 'lid_force_disabled');
@@ -94,9 +98,44 @@ if ($action && confirm_sesskey()) {
         $successmsg = get_string('course_settings_saved', 'local_lid', $updated);
         redirect($url, $successmsg, null, \core\output\notification::NOTIFY_SUCCESS);
     }
+
+    // Handle competency toggle POST.
+    if ($action === 'save_competencies') {
+        $compenabled = required_param('competencies_enabled', PARAM_INT);
+        $compenabled = (int) (bool) $compenabled;
+
+        $existing = $DB->get_record('local_lid_settings', ['courseid' => $courseid]);
+
+        if ($existing) {
+            $DB->update_record('local_lid_settings', (object) [
+                'id'                   => $existing->id,
+                'competencies_enabled' => $compenabled,
+                'timemodified'         => time(),
+            ]);
+        } else {
+            $DB->insert_record('local_lid_settings', (object) [
+                'courseid'             => $courseid,
+                'competencies_enabled' => $compenabled,
+                'prompt_locked'        => 0,
+                'trigger_async'        => 1,
+                'trigger_cron'         => 1,
+                'trigger_manual'       => 1,
+                'cron_interval'        => 5,
+                'cron_batchsize'       => 10,
+                'timecreated'          => time(),
+                'timemodified'         => time(),
+            ]);
+        }
+
+        $successmsg = get_string('competency_course_saved', 'local_lid');
+        redirect($url, $successmsg, null, \core\output\notification::NOTIFY_SUCCESS);
+    }
 }
 
-// Build forum status table for display.
+// =========================================================================
+// Build page data
+// =========================================================================
+
 $forcedisabled = (bool) get_config('local_lid', 'lid_force_disabled');
 
 // Include discussion_model from forum config so the table can display it.
@@ -143,6 +182,49 @@ foreach ($forums as $forum) {
         ]))->out(false),
     ];
 }
+
+// =========================================================================
+// Competency state
+// =========================================================================
+
+$competencysubsystemenabled = false;
+try {
+    $competencysubsystemenabled = \core_competency\api::is_enabled();
+} catch (\Throwable $e) {
+    // Competency classes may not exist.
+}
+
+$coursecompetencies = [];
+if ($competencysubsystemenabled) {
+    try {
+        $pairs = \core_competency\api::list_course_competencies($courseid);
+        foreach ($pairs as $pair) {
+            if (isset($pair['competency']) && $pair['competency'] instanceof \core_competency\competency) {
+                $coursecompetencies[] = $pair['competency'];
+            }
+        }
+    } catch (\Throwable $e) {
+        // No framework linked, etc.
+    }
+}
+
+// Current competencies_enabled state for this course.
+$coursesettings    = $DB->get_record('local_lid_settings', ['courseid' => $courseid]);
+$compenabled       = $coursesettings
+    ? (bool) $coursesettings->competencies_enabled
+    : (bool) get_config('local_lid', 'competencies_enabled_default');
+
+// =========================================================================
+// Prompt display (read-only)
+// =========================================================================
+
+$builder        = new \local_lid\llm\prompt_builder($courseid);
+$activetemplate = $builder->get_active_template();
+$forumanalyzer  = $builder->get_forum_analyzer_template();
+
+// =========================================================================
+// Render
+// =========================================================================
 
 echo $OUTPUT->header();
 echo $OUTPUT->heading(get_string('course_settings_heading', 'local_lid'));
@@ -233,6 +315,139 @@ if (empty($forumrows)) {
     }
 
     echo html_writer::table($table);
+}
+
+// =========================================================================
+// Competency evaluation section
+// =========================================================================
+
+echo html_writer::tag('h3',
+    get_string('competency_course_heading', 'local_lid'),
+    ['style' => 'margin-top:32px;margin-bottom:16px']
+);
+
+if (!$competencysubsystemenabled) {
+    // Moodle competencies not enabled at site level.
+    echo $OUTPUT->notification(
+        get_string('competency_course_site_disabled', 'local_lid'),
+        \core\output\notification::NOTIFY_INFO
+    );
+} else if (empty($coursecompetencies)) {
+    // Competencies enabled but none linked to this course.
+    echo $OUTPUT->notification(
+        get_string('competency_course_no_competencies', 'local_lid'),
+        \core\output\notification::NOTIFY_INFO
+    );
+} else {
+    // Show toggle and competency count.
+    echo html_writer::div(
+        get_string('competency_course_count', 'local_lid', count($coursecompetencies)),
+        '',
+        ['style' => 'margin-bottom:12px;color:#5a7090;font-size:13px']
+    );
+
+    // Competency toggle form.
+    $toggleurl = new moodle_url($url, [
+        'action'  => 'save_competencies',
+        'sesskey' => sesskey(),
+    ]);
+
+    echo html_writer::start_tag('form', [
+        'method' => 'post',
+        'action' => $toggleurl->out(false),
+        'style'  => 'display:flex;align-items:center;gap:12px;margin-bottom:16px',
+    ]);
+
+    echo html_writer::empty_tag('input', [
+        'type'  => 'hidden',
+        'name'  => 'sesskey',
+        'value' => sesskey(),
+    ]);
+    echo html_writer::empty_tag('input', [
+        'type'  => 'hidden',
+        'name'  => 'action',
+        'value' => 'save_competencies',
+    ]);
+
+    echo html_writer::start_tag('label', [
+        'style' => 'display:flex;align-items:center;gap:8px;cursor:pointer',
+    ]);
+
+    $checkedattr = $compenabled ? ['checked' => 'checked'] : [];
+    echo html_writer::empty_tag('input', array_merge([
+        'type'  => 'checkbox',
+        'name'  => 'competencies_enabled',
+        'value' => '1',
+    ], $checkedattr));
+
+    // Hidden field to ensure 0 is sent when checkbox unchecked.
+    echo html_writer::empty_tag('input', [
+        'type'  => 'hidden',
+        'name'  => 'competencies_enabled',
+        'value' => '0',
+    ]);
+
+    echo get_string('competency_course_enabled', 'local_lid');
+    echo html_writer::end_tag('label');
+
+    echo html_writer::tag('button',
+        get_string('savechanges'),
+        ['type' => 'submit', 'class' => 'btn btn-primary btn-sm']
+    );
+
+    echo html_writer::end_tag('form');
+
+    echo html_writer::div(
+        get_string('competency_course_enabled_desc', 'local_lid'),
+        '',
+        ['style' => 'color:#5a7090;font-size:12px;margin-bottom:16px;max-width:700px']
+    );
+
+    // List the competencies so the instructor knows what will be evaluated.
+    if ($compenabled) {
+        echo html_writer::start_tag('ul', [
+            'style' => 'margin-bottom:16px;padding-left:20px;color:#5a7090;font-size:13px',
+        ]);
+        foreach ($coursecompetencies as $comp) {
+            $name = format_string($comp->get('shortname'));
+            $desc = format_string(strip_tags($comp->get('description')));
+            $text = $name;
+            if (!empty($desc)) {
+                $text .= ' — ' . $desc;
+            }
+            echo html_writer::tag('li', $text);
+        }
+        echo html_writer::end_tag('ul');
+    }
+}
+
+// =========================================================================
+// Read-only prompt display
+// =========================================================================
+
+echo html_writer::tag('h3',
+    get_string('course_settings_prompt_heading', 'local_lid'),
+    ['style' => 'margin-top:32px;margin-bottom:8px']
+);
+
+echo html_writer::div(
+    get_string('course_settings_prompt_readonly_desc', 'local_lid'),
+    '',
+    ['style' => 'color:#5a7090;font-size:12px;margin-bottom:16px;max-width:700px']
+);
+
+// Show the forum discussion analyzer prompt (the fixed assessment instrument).
+if (!empty($forumanalyzer)) {
+    echo html_writer::tag('h4', 'Forum Discussion Analyzer (fixed)', [
+        'style' => 'font-size:14px;color:#5a7090;margin-bottom:8px',
+    ]);
+    echo html_writer::tag('textarea', htmlspecialchars($forumanalyzer), [
+        'class'    => 'form-control',
+        'rows'     => '12',
+        'readonly' => 'readonly',
+        'style'    => 'font-family:monospace;font-size:12px;background:#f8f9fa;'
+            . 'color:#495057;resize:vertical;max-width:900px;margin-bottom:24px',
+    ]);
 }
 
 echo $OUTPUT->footer();
