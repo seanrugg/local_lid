@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8" ?>
-<XMLDB PATH="local/lid/db" VERSION="20260321" COMMENT="XMLDB file for Moodle local/lid"
+<XMLDB PATH="local/lid/db" VERSION="20260328" COMMENT="XMLDB file for Moodle local/lid"
     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
     xsi:noNamespaceSchemaLocation="../../../lib/xmldb/xmldb.xsd">
   <TABLES>
@@ -20,6 +20,12 @@
     (courseid = 0). When prompt_locked = 1, the prompt editor renders
     read-only for all roles below Site Administrator regardless of the
     local/lid:editprompt capability.
+
+    competencies_enabled is meaningful at course level (courseid > 0).
+    When 1, the LLM prompt includes Moodle course competencies as
+    additional evaluation criteria. The site-level default for new
+    courses is stored in config_plugins (competencies_enabled_default),
+    not in this table.
     =========================================================================
     -->
     <TABLE NAME="local_lid_settings" COMMENT="LLM connection config and prompt template per site/course scope">
@@ -56,6 +62,8 @@
                COMMENT="Site-level only. 1 = LID analysis enabled by default for all new forums. 0 = disabled by default (teachers must opt in per forum)."/>
         <FIELD NAME="lid_force_disabled" TYPE="int" LENGTH="1" NOTNULL="true" DEFAULT="0"
                COMMENT="Site-level only. 1 = LID analysis force-disabled across the entire site. No teacher or course can override. Used for cost control and security lockdown."/>
+        <FIELD NAME="competencies_enabled" TYPE="int" LENGTH="1" NOTNULL="true" DEFAULT="0"
+               COMMENT="Course-level only. 1 = evaluate learners against Moodle course competencies in addition to standard rubrics. 0 = standard rubrics only. Site-level default is stored in config_plugins (competencies_enabled_default)."/>
         <FIELD NAME="timecreated" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0"/>
         <FIELD NAME="timemodified" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0"/>
       </FIELDS>
@@ -72,8 +80,8 @@
     =========================================================================
     local_lid_forum_config
     =========================================================================
-    Per-forum enable/disable toggle, participation model selection, and
-    optional forum-level prompt override.
+    Per-forum enable/disable toggle, participation model selection,
+    competency selection, and optional forum-level prompt override.
 
     When enabled = 0, no analysis is queued for this forum and no LID
     tab or dashboard surfaces are shown for it.
@@ -85,6 +93,13 @@
       open_engagement    — learners can read all posts before contributing
       structured_debate  — learners argue assigned or chosen positions
 
+    competency_ids is a JSON-encoded array controlling which Moodle course
+    competencies the LLM evaluates for this forum. Three-state semantics:
+      null      = inherit course setting (all course competencies)
+      '[]'      = explicitly exclude all competencies for this forum
+      '[3,7,12]' = evaluate only these specific competency IDs
+    Only effective when the course-level competencies_enabled = 1.
+
     prompt_override is only used when the site admin has NOT locked the
     prompt (prompt_locked = 0 in local_lid_settings for courseid = 0).
     When null, the active prompt resolves via: forum override → course
@@ -93,7 +108,7 @@
     the fixed assessment instrument for closed discussions.
     =========================================================================
     -->
-    <TABLE NAME="local_lid_forum_config" COMMENT="Per-forum LID enable/disable, discussion model, and optional prompt override">
+    <TABLE NAME="local_lid_forum_config" COMMENT="Per-forum LID enable/disable, discussion model, competency selection, and optional prompt override">
       <FIELDS>
         <FIELD NAME="id" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="true"
                COMMENT="Primary key"/>
@@ -105,6 +120,8 @@
                COMMENT="1 = LID analysis active for this forum; 0 = disabled"/>
         <FIELD NAME="discussion_model" TYPE="char" LENGTH="20" NOTNULL="true" DEFAULT="open_engagement"
                COMMENT="Participation model: independent_first | open_engagement | structured_debate. Controls which Critical Discourse rubric variant the LLM applies."/>
+        <FIELD NAME="competency_ids" TYPE="text" NOTNULL="false"
+               COMMENT="JSON-encoded array of Moodle competency IDs to evaluate for this forum. Three-state semantics: null = inherit course setting (all competencies); empty JSON array '[]' = explicitly exclude all competencies; populated array '[3,7,12]' = evaluate only these specific competency IDs. Only effective when course-level competencies_enabled = 1."/>
         <FIELD NAME="prompt_override" TYPE="text" NOTNULL="false"
                COMMENT="Forum-level session analyzer prompt override. Null = use course or site prompt. Only honoured when prompt_locked = 0. Does not affect the forum discussion analyzer."/>
         <FIELD NAME="timecreated" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0"/>
