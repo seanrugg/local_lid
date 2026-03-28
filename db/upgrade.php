@@ -35,9 +35,20 @@
  *                Adds scope_thread index on local_lid_analysis for thread-scope
  *                lookups. Updates queue priority comment (async tier removed).
  *                No data migration required — existing analyses are unaffected.
+ *   2026032800 — v0.5.0 — Role-based access control. Adds viewpeeranalysis
+ *                capability, student-only analysis queuing, full thread context
+ *                with pseudonymised peers. No DB schema changes.
+ *   2026032801 — v0.6.0 — Course Competency Integration.
+ *                Adds competencies_enabled to local_lid_settings (course-level
+ *                toggle for competency evaluation).
+ *                Adds competency_ids to local_lid_forum_config (JSON array of
+ *                specific competency IDs to evaluate; null=inherit/all,
+ *                []=exclude all, [3,7]=specific).
+ *                Adds site-level default via config_plugins
+ *                (competencies_enabled_default).
  *
  * When adding a new upgrade step:
- *   1. Increment $plugin->version in version.php (e.g. 2026032003).
+ *   1. Increment $plugin->version in version.php (e.g. 2026032801).
  *   2. Add an if ($oldversion < YYYYMMDDNN) block below.
  *   3. Make all schema changes via $dbman (never raw ALTER TABLE).
  *   4. Always end the block with upgrade_plugin_savepoint(true, YYYYMMDDNN, 'local', 'lid').
@@ -156,6 +167,64 @@ function xmldb_local_lid_upgrade(int $oldversion): bool {
         }
 
         upgrade_plugin_savepoint(true, 2026032003, 'local', 'lid');
+    }
+
+    // --------------------------------------------------------------------
+    // v0.6.0 — Course Competency Integration
+    //
+    // 1. Add competencies_enabled to local_lid_settings.
+    //    Course-level toggle that enables evaluation against Moodle
+    //    course competencies. Default 0 (disabled). Site-level default
+    //    is stored in config_plugins (not in this table) so courses can
+    //    individually override it.
+    //
+    // 2. Add competency_ids to local_lid_forum_config.
+    //    JSON-encoded array of competency IDs to evaluate for this forum.
+    //    Three-state semantics:
+    //      null  = inherit course setting (all course competencies)
+    //      '[]'  = explicitly exclude all competencies for this forum
+    //      '[3,7,12]' = evaluate only these specific competency IDs
+    //    Nullable TEXT field; null is the default (inherit).
+    // --------------------------------------------------------------------
+    if ($oldversion < 2026032801) {
+
+        // ---- 1. competencies_enabled on local_lid_settings ----
+        $settingstable = new xmldb_table('local_lid_settings');
+
+        $compenabledfield = new xmldb_field(
+            'competencies_enabled',
+            XMLDB_TYPE_INTEGER,
+            '1',
+            null,
+            XMLDB_NOTNULL,
+            null,
+            '0',
+            'lid_force_disabled'  // Insert after lid_force_disabled.
+        );
+
+        if (!$dbman->field_exists($settingstable, $compenabledfield)) {
+            $dbman->add_field($settingstable, $compenabledfield);
+        }
+
+        // ---- 2. competency_ids on local_lid_forum_config ----
+        $forumconfigtable = new xmldb_table('local_lid_forum_config');
+
+        $compidsfield = new xmldb_field(
+            'competency_ids',
+            XMLDB_TYPE_TEXT,
+            null,
+            null,
+            null,           // NOTNULL = false (nullable).
+            null,
+            null,           // Default null.
+            'discussion_model'  // Insert after discussion_model.
+        );
+
+        if (!$dbman->field_exists($forumconfigtable, $compidsfield)) {
+            $dbman->add_field($forumconfigtable, $compidsfield);
+        }
+
+        upgrade_plugin_savepoint(true, 2026032801, 'local', 'lid');
     }
 
     return true;
