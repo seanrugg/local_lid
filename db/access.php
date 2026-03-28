@@ -25,8 +25,17 @@
  *   local/lid:viewcoursedashboard  — Teacher / Manager / Course Creator.
  *                                    View the Course LID in the Reports tab.
  *
- *   local/lid:viewforumdashboard   — Teacher / Manager / Course Creator.
+ *   local/lid:viewforumdashboard   — Teacher / Manager / Course Creator / Student.
  *                                    View the Forum LID tab on a forum activity.
+ *                                    Students see the forum aggregate and their own analysis
+ *                                    tab only — peer analysis tabs require viewpeeranalysis.
+ *
+ *   local/lid:viewpeeranalysis     — Teacher / Manager / Course Creator.
+ *                                    View other students' individual LID analysis tabs on
+ *                                    the forum dashboard. Without this capability a user can
+ *                                    only see the forum aggregate and their own analysis tab.
+ *                                    Checked at CONTEXT_MODULE so it can be overridden per
+ *                                    forum activity via Moodle's standard permissions UI.
  *
  *   local/lid:viewstudentdashboard — Teacher / Manager / Course Creator.
  *                                    View the Student LID tab on a student's course profile.
@@ -81,6 +90,17 @@ $capabilities = [
     ],
 
     'local/lid:viewforumdashboard' => [
+        'captype'       => 'read',
+        'contextlevel'  => CONTEXT_MODULE,
+        'archetypes'    => [
+            'student'        => CAP_ALLOW,
+            'teacher'        => CAP_ALLOW,
+            'editingteacher' => CAP_ALLOW,
+            'manager'        => CAP_ALLOW,
+        ],
+    ],
+
+    'local/lid:viewpeeranalysis' => [
         'captype'       => 'read',
         'contextlevel'  => CONTEXT_MODULE,
         'archetypes'    => [
