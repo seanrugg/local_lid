@@ -27,6 +27,13 @@
  *   - The primary unit of analysis is student_forum scope (all posts by one
  *     learner across all threads in a forum). No per-post LLM calls are made.
  *
+ *   - Only users who hold a student-archetype role in the course context are
+ *     eligible for student_forum analysis. Posts by instructors, managers, or
+ *     other non-student roles are excluded from analysis queuing. Instructor
+ *     posts still appear as conversational context in the LLM prompt so the
+ *     assessed learner's replies can be understood in their full discourse
+ *     context — they are simply not scored or given analysis rows.
+ *
  *   - When a learner posts during an active discussion, their student_forum
  *     analysis row is created (status = 'pending') or flagged stale if a
  *     completed analysis already exists. No queue entry is created at post time.
@@ -90,6 +97,10 @@ class observer {
      * Handle \mod_forum\event\post_created.
      *
      * Does NOT queue analysis. Instead:
+     *   - Checks whether the poster holds a student-archetype role in the course
+     *     context. If not, the post is ignored for LID analysis purposes (the
+     *     content will still appear as conversational context when student analyses
+     *     are built by the prompt builder).
      *   - Creates a student_forum analysis row for this learner+forum if one
      *     does not already exist (status = 'pending').
      *   - If a 'complete' row exists (analysis ran before this post was made),
@@ -105,6 +116,11 @@ class observer {
         $userid   = $event->userid;
 
         if (!$forumid || !self::is_forum_enabled($forumid)) {
+            return;
+        }
+
+        // Only create analysis rows for users with a student-archetype role.
+        if (!self::user_has_student_role($userid, $courseid)) {
             return;
         }
 
@@ -147,8 +163,12 @@ class observer {
      *   - process_queue cron (cut-off date / inactivity lock detection)
      *   - Forum LID dashboard "Run LID Analysis" button (manual trigger)
      *
-     * Ensures student_forum rows exist for all learners who have posted,
-     * and thread rows exist for all discussions. Then queues all rows
+     * Ensures student_forum rows exist for all learners who have posted
+     * and hold a student-archetype role in the course context. Non-student
+     * posters (instructors, managers, etc.) are excluded — their posts
+     * appear as conversational context in the prompt but are not scored.
+     *
+     * Thread rows exist for all discussions. Then queues all rows
      * with status 'pending' or 'stale'. Rows already 'processing' are skipped.
      *
      * @param  int $courseid
@@ -163,8 +183,13 @@ class observer {
     ): int {
         global $DB;
 
-        // Ensure student_forum rows exist for all learners who have posted.
-        foreach (self::get_forum_posters($forumid) as $userid) {
+        // Get all user ids who posted in this forum AND hold a student role.
+        $allposters = self::get_forum_posters($forumid);
+        $studentids = self::get_student_userids($courseid);
+        $studentposters = array_intersect($allposters, $studentids);
+
+        // Ensure student_forum rows exist only for student-role posters.
+        foreach ($studentposters as $userid) {
             self::upsert_student_forum_row($courseid, $forumid, $userid);
         }
 
@@ -400,6 +425,73 @@ class observer {
 
         $records = $DB->get_records_sql($sql, ['forumid' => $forumid]);
         return array_map('intval', array_keys($records));
+    }
+
+    // -------------------------------------------------------------------------
+    // Private — role filtering helpers
+    // -------------------------------------------------------------------------
+
+    /**
+     * Return array of user ids who hold a student-archetype role in the course.
+     *
+     * Uses get_archetype_roles('student') to resolve role ids portably —
+     * the student role id is not fixed across Moodle installations.
+     *
+     * @param  int   $courseid
+     * @return int[]
+     */
+    private static function get_student_userids(int $courseid): array {
+        $studentroles = get_archetype_roles('student');
+        if (empty($studentroles)) {
+            return [];
+        }
+
+        $context = \context_course::instance($courseid);
+        $userids = [];
+
+        foreach ($studentroles as $role) {
+            $users = get_role_users($role->id, $context, false, 'u.id', 'u.id');
+            foreach ($users as $user) {
+                $userids[(int) $user->id] = true;
+            }
+        }
+
+        return array_keys($userids);
+    }
+
+    /**
+     * Check whether a specific user holds a student-archetype role in the course.
+     *
+     * Lightweight single-user check used by the post_created event handler
+     * to avoid loading all student ids for every post event.
+     *
+     * @param  int  $userid
+     * @param  int  $courseid
+     * @return bool
+     */
+    private static function user_has_student_role(int $userid, int $courseid): bool {
+        global $DB;
+
+        $studentroles = get_archetype_roles('student');
+        if (empty($studentroles)) {
+            return false;
+        }
+
+        $roleids = array_map(function($role) {
+            return (int) $role->id;
+        }, $studentroles);
+
+        $context = \context_course::instance($courseid);
+
+        list($insql, $params) = $DB->get_in_or_equal($roleids, SQL_PARAMS_NAMED);
+        $params['userid']    = $userid;
+        $params['contextid'] = $context->id;
+
+        return $DB->record_exists_select(
+            'role_assignments',
+            "roleid {$insql} AND userid = :userid AND contextid = :contextid",
+            $params
+        );
     }
 
     // -------------------------------------------------------------------------
