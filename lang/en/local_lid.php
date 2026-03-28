@@ -190,6 +190,8 @@ $string['dashboard_forum_lid_guidance']       = 'LID analysis runs automatically
 $string['dashboard_forum_thread_heading']     = 'Discussion threads';
 $string['dashboard_forum_thread_pending']     = 'Thread analysis pending.';
 
+$string['dashboard_forum_owndata_notice']     = 'You are viewing the forum aggregate and your own Learning Intelligence analysis. Individual results for other learners are not visible to you.';
+
 // ---------------------------------------------------------------------------
 // Dashboard — shared labels
 // ---------------------------------------------------------------------------
@@ -316,6 +318,7 @@ $string['privacy_metadata_llm_api']                        = 'Forum post content
 $string['lid:managesitesettings']    = 'Manage Learning Intelligence Dashboard site settings';
 $string['lid:viewcoursedashboard']   = 'View the course-level Learning Intelligence Dashboard';
 $string['lid:viewforumdashboard']    = 'View the forum-level Learning Intelligence Dashboard';
+$string['lid:viewpeeranalysis']      = 'View other learners\' individual LID analysis on the forum dashboard';
 $string['lid:viewstudentdashboard']  = 'View the learner-level Learning Intelligence Dashboard';
 $string['lid:configureforum']        = 'Enable or disable LID analysis for a forum';
 $string['lid:editprompt']            = 'Edit the LID session analyzer prompt template';
