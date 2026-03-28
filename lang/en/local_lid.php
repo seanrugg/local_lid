@@ -30,6 +30,7 @@
  *   task_*              — scheduled task strings
  *   notification_*      — messaging/email notification strings
  *   discussion_model_*  — participation model selector strings
+ *   competency_*        — competency integration strings
  *
  * @package    local_lid
  * @copyright  2026 Learning Intelligence Dashboard Project Contributors
@@ -169,6 +170,22 @@ $string['discussion_model_open_engagement_desc']    = 'Learners can read all pos
 
 $string['discussion_model_structured_debate']       = 'Structured Debate';
 $string['discussion_model_structured_debate_desc']  = 'Learners argue assigned or chosen positions. Assessment focuses on advocacy, counterargument, evidence quality, and position defence. Maintaining a well-reasoned position under challenge is a strength; revising a position where evidence genuinely warrants it is intellectual integrity. Use when the curriculum assigns debate roles or requires position papers.';
+
+// ---------------------------------------------------------------------------
+// Forum configuration — competency selector
+// ---------------------------------------------------------------------------
+
+$string['forum_config_competencies']              = 'Course competencies';
+$string['forum_config_competencies_heading']      = 'Competency evaluation';
+$string['forum_config_competencies_desc']         = 'Select which course competencies the LLM should evaluate learners against in this forum. When none are selected, all course competencies are used (inherited from the course setting). To explicitly exclude all competencies for this forum, check "Exclude all competencies".';
+$string['forum_config_competencies_exclude_all']  = 'Exclude all competencies for this forum';
+$string['forum_config_competencies_exclude_all_desc'] = 'When checked, no course competencies will be included in the LLM prompt for this forum, even if competency evaluation is enabled at the course level.';
+$string['forum_config_competencies_inherit']      = 'Inherit from course (all competencies)';
+$string['forum_config_competencies_specific']     = 'Evaluate specific competencies only';
+$string['forum_config_competencies_none_in_course'] = 'No competencies are linked to this course. Add competencies to the course via the Competencies tab before enabling competency evaluation.';
+$string['forum_config_competencies_disabled']     = 'Competency evaluation is disabled at the course level. Enable it in the course LID settings to configure per-forum competency selection.';
+$string['forum_config_competencies_site_disabled'] = 'Competencies are not enabled on this Moodle site. A site administrator must enable competencies in Site Administration → Competencies before this feature can be used.';
+$string['forum_config_competencies_saved']        = 'Forum competency settings saved.';
 
 // ---------------------------------------------------------------------------
 // Forum LID dashboard — analysis trigger and status
@@ -370,6 +387,38 @@ $string['forum_lid_saved']                     = 'Forum LID setting saved.';
 $string['lid_hidden_force_disabled']           = 'Learning Intelligence analysis is currently disabled by the site administrator. Existing data is preserved and will reappear when analysis is re-enabled.';
 $string['lid_hidden_course_disabled']          = 'Learning Intelligence analysis is currently disabled for this course. Existing data is preserved and will reappear if re-enabled.';
 $string['lid_hidden_forum_disabled']           = 'Learning Intelligence analysis is disabled for this forum. Enable it in the forum settings to view the dashboard.';
+
+// ---------------------------------------------------------------------------
+// Competency integration — site level
+// ---------------------------------------------------------------------------
+
+$string['settings_competencies_enabled_default']      = 'Enable competency evaluation by default';
+$string['settings_competencies_enabled_default_desc'] = 'When enabled, competency evaluation against Moodle course competencies will be active by default for new courses. Instructors can override this per course. Requires the Moodle competency subsystem to be enabled at the site level (Site Administration → Competencies). When disabled (default), instructors must explicitly enable competency evaluation in their course LID settings.';
+
+// ---------------------------------------------------------------------------
+// Competency integration — course level
+// ---------------------------------------------------------------------------
+
+$string['competency_course_heading']              = 'Competency evaluation';
+$string['competency_course_enabled']              = 'Evaluate against course competencies';
+$string['competency_course_enabled_desc']         = 'When enabled, the LLM will evaluate learner forum participation against the competencies linked to this course, in addition to the standard LID rubrics. Competencies are injected into the assessment prompt so the LLM can identify evidence of each competency in the learner\'s posts.';
+$string['competency_course_no_competencies']      = 'No competencies are linked to this course. Add competencies via the course Competencies tab before enabling this feature.';
+$string['competency_course_site_disabled']        = 'The Moodle competency subsystem is not enabled on this site. A site administrator must enable it in Site Administration → Competencies before competency evaluation can be used.';
+$string['competency_course_saved']                = 'Course competency settings saved.';
+$string['competency_course_count']                = '{$a} competency/competencies linked to this course.';
+
+// ---------------------------------------------------------------------------
+// Competency integration — prompt context
+// ---------------------------------------------------------------------------
+
+$string['competency_prompt_header']               = 'COURSE COMPETENCIES (evaluate the learner against these in addition to standard rubrics):';
+
+// ---------------------------------------------------------------------------
+// Course settings — read-only prompt display
+// ---------------------------------------------------------------------------
+
+$string['course_settings_prompt_heading']         = 'Assessment prompt';
+$string['course_settings_prompt_readonly_desc']   = 'This is the site-level assessment prompt that the LLM uses to evaluate learner contributions. It is set by the site administrator and cannot be modified at the course level. It is shown here for instructor awareness.';
 
 // ---------------------------------------------------------------------------
 // Message provider labels
