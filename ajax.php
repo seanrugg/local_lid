@@ -17,54 +17,22 @@
 /**
  * AJAX endpoint for local_lid.
  *
- * All requests must:
- *   - Be POST requests (except 'status' which accepts GET for polling).
- *   - Include a valid Moodle sesskey (CSRF protection).
- *   - Be from a logged-in user with the appropriate capability.
+ * All actions return JSON. Stray PHP output is buffered and discarded
+ * to prevent corruption of the JSON response.
  *
  * Actions:
- *
- *   trigger
- *     Manually enqueue a forum for (re-)analysis.
- *     Required params: forumid (int) + courseid (int), OR analysisid (int)
- *     Required capability: local/lid:triggeranalysis (module context)
- *     Response: { success: true, queued: N }
- *
- *   status
- *     Poll the analysis status for an analysis record.
- *     Required params: analysisid (int)
- *     Required capability: local/lid:viewforumdashboard (module context)
- *     Response: { status: string, analysis_json: string|null }
- *
- *   forum_config
- *     Save the LID enabled/disabled state, discussion model, and optional
- *     prompt override for a forum.
- *     Required params: forumid (int), courseid (int), enabled (0|1)
- *     Optional params: discussion_model (string), prompt_override (string)
- *     Required capability: local/lid:configureforum (module context)
- *     Response: { success: true, enabled: bool, discussion_model: string }
- *
- *   save_prompt
- *     Save a course-level prompt override.
- *     Required params: courseid (int), prompt (string)
- *     Required capability: local/lid:editprompt (course context)
- *     Blocked when prompt_locked = 1.
- *     Response: { success: true }
- *
- *   reset_prompt_default
- *     Return the plugin's shipped default prompt text.
- *     Required capability: local/lid:managesitesettings (system context)
- *     Response: { success: true, prompt: string }
- *
- * All error responses follow: { error: true, message: string }
+ *   trigger                  — manually queue analysis for a forum/course/row
+ *   status                   — poll analysis status
+ *   forum_config             — save forum enable/disable + discussion model
+ *   save_prompt              — save course-level prompt override
+ *   reset_prompt_default     — fetch plugin default prompt text
+ *   save_course_competencies — toggle competencies_enabled at course level
+ *   save_forum_competencies  — save forum-level competency_ids selection
  *
  * @package    local_lid
  * @copyright  2026 Learning Intelligence Dashboard Project Contributors
  * @license    https://www.gnu.org/licenses/gpl-3.0.html GNU GPL v3 or later
  */
-
-define('AJAX_SCRIPT', true);
-define('NO_DEBUG_DISPLAY', true);  // Prevent PHP/Moodle debug output corrupting JSON.
 
 require_once(__DIR__ . '/../../config.php');
 require_once($CFG->dirroot . '/local/lid/lib.php');
@@ -105,6 +73,16 @@ try {
         case 'reset_prompt_default':
             confirm_sesskey();
             echo json_encode(handle_reset_prompt_default());
+            break;
+
+        case 'save_course_competencies':
+            confirm_sesskey();
+            echo json_encode(handle_save_course_competencies());
+            break;
+
+        case 'save_forum_competencies':
+            confirm_sesskey();
+            echo json_encode(handle_save_forum_competencies());
             break;
 
         default:
@@ -461,5 +439,135 @@ function handle_save_prompt(): array {
         'success'     => true,
         'prompt_hash' => hash('sha256', $prompt),
         'message'     => get_string('prompt_saved', 'local_lid'),
+    ];
+}
+
+/**
+ * Handle 'save_course_competencies' action — toggle competencies_enabled
+ * at the course level.
+ *
+ * Accepted params:
+ *   courseid               int  Required.
+ *   competencies_enabled   int  Required. 0 or 1.
+ *
+ * Creates or updates the local_lid_settings row for this course.
+ *
+ * @return array JSON-serialisable response.
+ */
+function handle_save_course_competencies(): array {
+    global $DB;
+
+    $courseid = required_param('courseid', PARAM_INT);
+    $enabled  = required_param('competencies_enabled', PARAM_INT);
+
+    $context = context_course::instance($courseid);
+    require_capability('local/lid:configureforum', $context);
+
+    $enabled = (int) (bool) $enabled;
+
+    $existing = $DB->get_record('local_lid_settings', ['courseid' => $courseid]);
+
+    if ($existing) {
+        $DB->update_record('local_lid_settings', (object) [
+            'id'                    => $existing->id,
+            'competencies_enabled'  => $enabled,
+            'timemodified'          => time(),
+        ]);
+    } else {
+        $DB->insert_record('local_lid_settings', (object) [
+            'courseid'              => $courseid,
+            'competencies_enabled'  => $enabled,
+            'prompt_locked'         => 0,
+            'trigger_async'         => 1,
+            'trigger_cron'          => 1,
+            'trigger_manual'        => 1,
+            'cron_interval'         => 5,
+            'cron_batchsize'        => 10,
+            'timecreated'           => time(),
+            'timemodified'          => time(),
+        ]);
+    }
+
+    return [
+        'success' => true,
+        'enabled' => (bool) $enabled,
+        'message' => get_string('competency_course_saved', 'local_lid'),
+    ];
+}
+
+/**
+ * Handle 'save_forum_competencies' action — save the competency_ids
+ * selection for a specific forum.
+ *
+ * Accepted params:
+ *   forumid          int     Required.
+ *   courseid         int     Required.
+ *   competency_mode  string  Required. One of: 'inherit', 'exclude', 'specific'.
+ *   competency_ids   string  Optional. JSON-encoded array of competency IDs.
+ *                            Only used when competency_mode = 'specific'.
+ *
+ * Translates competency_mode into the three-state competency_ids column:
+ *   'inherit'  → null  (use all course competencies)
+ *   'exclude'  → '[]'  (no competencies for this forum)
+ *   'specific' → '[3,7,12]' (only these IDs)
+ *
+ * @return array JSON-serialisable response.
+ */
+function handle_save_forum_competencies(): array {
+    global $DB;
+
+    $forumid  = required_param('forumid',  PARAM_INT);
+    $courseid = required_param('courseid', PARAM_INT);
+    $mode     = required_param('competency_mode', PARAM_ALPHA);
+
+    $cm = get_coursemodule_from_instance('forum', $forumid, $courseid,
+        false, MUST_EXIST);
+    $context = context_module::instance($cm->id);
+    require_capability('local/lid:configureforum', $context);
+
+    // Translate mode to the stored competency_ids value.
+    $competencyids = null; // Default: inherit.
+
+    if ($mode === 'exclude') {
+        $competencyids = '[]';
+    } else if ($mode === 'specific') {
+        $rawids = optional_param('competency_ids', '[]', PARAM_RAW);
+        $decoded = json_decode($rawids, true);
+        if (is_array($decoded)) {
+            $sanitised = array_values(array_map('intval', array_filter($decoded, 'is_numeric')));
+            $competencyids = empty($sanitised) ? '[]' : json_encode($sanitised);
+        } else {
+            $competencyids = '[]';
+        }
+    }
+    // mode === 'inherit' → $competencyids stays null.
+
+    // Update the forum config row (must exist — forum config is created when LID is enabled).
+    $existing = $DB->get_record('local_lid_forum_config', ['forumid' => $forumid]);
+
+    if ($existing) {
+        $DB->update_record('local_lid_forum_config', (object) [
+            'id'              => $existing->id,
+            'competency_ids'  => $competencyids,
+            'timemodified'    => time(),
+        ]);
+    } else {
+        // Edge case: forum config row doesn't exist yet (shouldn't happen if LID is enabled).
+        $DB->insert_record('local_lid_forum_config', (object) [
+            'forumid'         => $forumid,
+            'courseid'        => $courseid,
+            'enabled'         => 0,
+            'discussion_model' => 'open_engagement',
+            'competency_ids'  => $competencyids,
+            'prompt_override' => null,
+            'timecreated'     => time(),
+            'timemodified'    => time(),
+        ]);
+    }
+
+    return [
+        'success'         => true,
+        'competency_ids'  => $competencyids,
+        'message'         => get_string('forum_config_competencies_saved', 'local_lid'),
     ];
 }
