@@ -55,9 +55,25 @@ defined('MOODLE_INTERNAL') || die();
  * all other posts provide conversational context for accurate evaluation of
  * peer-dependent rubrics (Critical Discourse, Peer Advancement, etc.).
  *
+ * Course competency integration (v0.6.0):
+ *
+ *   When competencies_enabled = 1 at the course level and the Moodle competency
+ *   subsystem is active, course competencies are resolved at prompt assembly time
+ *   and injected as a structured block between the context header and the analyzer
+ *   prompt. Forum-level competency_ids provides three-state filtering:
+ *     null      = inherit course setting (all course competencies)
+ *     '[]'      = explicitly exclude all competencies for this forum
+ *     '[3,7]'   = evaluate only these specific competency IDs
+ *
+ *   Competencies are queried via core_competency\api::list_course_competencies()
+ *   which returns an array of {competency, coursecompetency} pairs. Each competency
+ *   has shortname, description, and idnumber.
+ *
  * Final structure — student_forum / thread analyses:
  *
  *   [CONTEXT HEADER]          ← includes discussion_model, word_count, character_count
+ *   ---
+ *   [COMPETENCY BLOCK]        ← optional; only when competencies are resolved
  *   ---
  *   [FORUM DISCUSSION ANALYZER PROMPT]
  *   ---
@@ -140,8 +156,12 @@ class prompt_builder {
     /** @var string The discussion model resolved from local_lid_forum_config. */
     private string $discussionmodel = self::MODEL_OPEN_ENGAGEMENT;
 
+    /** @var string The resolved competency block for prompt injection (empty if none). */
+    private string $competencyblock = '';
+
     /**
-     * Constructor — resolves and caches the active prompt template and discussion model.
+     * Constructor — resolves and caches the active prompt template, discussion model,
+     * and competency block.
      *
      * @param int      $courseid Course id.
      * @param int|null $forumid  Forum id (null for course-level analyses).
@@ -154,6 +174,7 @@ class prompt_builder {
         $this->activetemplate  = $this->resolve_template();
         $this->prompthash      = hash('sha256', $this->activetemplate);
         $this->discussionmodel = $this->resolve_discussion_model();
+        $this->competencyblock = $this->resolve_competency_block();
     }
 
     // -------------------------------------------------------------------------
@@ -401,6 +422,17 @@ class prompt_builder {
         return $this->compute_post_stats($posts);
     }
 
+    /**
+     * Return the resolved competency block text.
+     *
+     * Exposed for testing and logging. Empty string if no competencies apply.
+     *
+     * @return string
+     */
+    public function get_competency_block(): string {
+        return $this->competencyblock;
+    }
+
     // -------------------------------------------------------------------------
     // Private — prompt resolution
     // -------------------------------------------------------------------------
@@ -474,6 +506,226 @@ class prompt_builder {
 
         return in_array($model, $valid, true) ? $model : self::MODEL_OPEN_ENGAGEMENT;
     }
+
+    // -------------------------------------------------------------------------
+    // Private — competency resolution
+    // -------------------------------------------------------------------------
+
+    /**
+     * Resolve the competency block to inject into the prompt.
+     *
+     * Resolution logic:
+     *   1. Check if Moodle's competency subsystem is enabled site-wide.
+     *      If not → return '' (no block).
+     *   2. Check if competencies_enabled = 1 at the course level.
+     *      If not → return '' (no block).
+     *   3. If a forum is set, check competency_ids on local_lid_forum_config:
+     *      - null  → use all course competencies (inherit).
+     *      - '[]'  → exclude all competencies for this forum → return ''.
+     *      - '[3,7]' → filter to only these competency IDs.
+     *   4. Query core_competency\api::list_course_competencies() for the course.
+     *   5. Apply forum-level filter if specific IDs were set.
+     *   6. Format the surviving competencies into a prompt block.
+     *
+     * @return string Formatted competency block, or '' if none apply.
+     */
+    private function resolve_competency_block(): string {
+        // Step 1: Is the Moodle competency subsystem enabled?
+        if (!$this->is_competency_subsystem_enabled()) {
+            return '';
+        }
+
+        // Step 2: Is competency evaluation enabled for this course?
+        if (!$this->is_course_competencies_enabled()) {
+            return '';
+        }
+
+        // Step 3: Resolve forum-level competency_ids filter.
+        $forumfilter = $this->resolve_forum_competency_filter();
+        // $forumfilter is one of:
+        //   null   → inherit (use all)
+        //   []     → exclude all
+        //   [3,7]  → specific IDs only
+        if (is_array($forumfilter) && empty($forumfilter)) {
+            // Explicitly excluded — empty array means "no competencies for this forum".
+            return '';
+        }
+
+        // Step 4: Query course competencies from Moodle's competency API.
+        $competencies = $this->fetch_course_competencies();
+        if (empty($competencies)) {
+            return '';
+        }
+
+        // Step 5: Apply forum-level filter if specific IDs were set.
+        if (is_array($forumfilter) && !empty($forumfilter)) {
+            $allowedids = array_flip($forumfilter);
+            $competencies = array_filter($competencies, function($comp) use ($allowedids) {
+                return isset($allowedids[$comp->get('id')]);
+            });
+            if (empty($competencies)) {
+                return '';
+            }
+        }
+
+        // Step 6: Format into a prompt block.
+        return $this->format_competency_block($competencies);
+    }
+
+    /**
+     * Check if the Moodle competency subsystem is enabled at site level.
+     *
+     * @return bool
+     */
+    private function is_competency_subsystem_enabled(): bool {
+        try {
+            return \core_competency\api::is_enabled();
+        } catch (\Throwable $e) {
+            // Competency classes may not exist on very old Moodle builds.
+            return false;
+        }
+    }
+
+    /**
+     * Check if competency evaluation is enabled for this course.
+     *
+     * Checks the course-level local_lid_settings row first. If no row exists,
+     * falls back to the site-level default in config_plugins.
+     *
+     * @return bool
+     */
+    private function is_course_competencies_enabled(): bool {
+        global $DB;
+
+        // Check course-level settings row.
+        $coursesettings = $DB->get_record(
+            'local_lid_settings',
+            ['courseid' => $this->courseid],
+            'competencies_enabled'
+        );
+
+        if ($coursesettings) {
+            return (bool) $coursesettings->competencies_enabled;
+        }
+
+        // No course-level row — fall back to site default.
+        return (bool) get_config('local_lid', 'competencies_enabled_default');
+    }
+
+    /**
+     * Resolve the forum-level competency_ids filter.
+     *
+     * @return array|null  null = inherit (all), [] = exclude all,
+     *                     [int, int, ...] = specific competency IDs.
+     */
+    private function resolve_forum_competency_filter(): ?array {
+        global $DB;
+
+        if (!$this->forumid) {
+            return null; // No forum context → inherit all.
+        }
+
+        $raw = $DB->get_field(
+            'local_lid_forum_config',
+            'competency_ids',
+            ['forumid' => $this->forumid]
+        );
+
+        // null or false (no row / null column) → inherit.
+        if ($raw === null || $raw === false) {
+            return null;
+        }
+
+        // Decode JSON.
+        $decoded = json_decode($raw, true);
+
+        // Invalid JSON or non-array → treat as inherit.
+        if (!is_array($decoded)) {
+            return null;
+        }
+
+        // Empty array → exclude all. Populated array → specific IDs.
+        return array_map('intval', $decoded);
+    }
+
+    /**
+     * Fetch course competencies from Moodle's competency API.
+     *
+     * Returns an array of \core_competency\competency persistent objects.
+     * Returns empty array if no competencies are linked to the course or
+     * if the API call fails.
+     *
+     * @return \core_competency\competency[]
+     */
+    private function fetch_course_competencies(): array {
+        try {
+            // list_course_competencies returns array of
+            // {competency: competency, coursecompetency: course_competency} pairs.
+            $pairs = \core_competency\api::list_course_competencies($this->courseid);
+        } catch (\Throwable $e) {
+            // API call failed — course may not exist, no framework linked, etc.
+            return [];
+        }
+
+        if (empty($pairs)) {
+            return [];
+        }
+
+        // Extract the competency persistent from each pair.
+        $competencies = [];
+        foreach ($pairs as $pair) {
+            if (isset($pair['competency']) && $pair['competency'] instanceof \core_competency\competency) {
+                $competencies[] = $pair['competency'];
+            }
+        }
+
+        return $competencies;
+    }
+
+    /**
+     * Format an array of competency persistents into a prompt injection block.
+     *
+     * Uses the lang string competency_prompt_header as the block title.
+     * Each competency is numbered and includes its shortname and description.
+     * The idnumber is included if present (useful for cross-referencing).
+     *
+     * @param  \core_competency\competency[] $competencies
+     * @return string Formatted block ready for prompt injection.
+     */
+    private function format_competency_block(array $competencies): string {
+        $header = get_string('competency_prompt_header', 'local_lid');
+
+        $lines = [];
+        $lines[] = $header;
+
+        $num = 1;
+        foreach ($competencies as $comp) {
+            $shortname   = trim($comp->get('shortname'));
+            $description = trim(strip_tags($comp->get('description')));
+            $idnumber    = trim($comp->get('idnumber'));
+
+            $entry = '  ' . $num . '. ' . $shortname;
+
+            if (!empty($idnumber)) {
+                $entry .= ' [' . $idnumber . ']';
+            }
+
+            if (!empty($description)) {
+                $entry .= ' — ' . $description;
+            }
+
+            $lines[] = $entry;
+            $num++;
+        }
+
+        $lines[] = '';
+
+        return implode("\n", $lines);
+    }
+
+    // -------------------------------------------------------------------------
+    // Private — file loaders
+    // -------------------------------------------------------------------------
 
     /**
      * Load the forum-post preamble from prompts/forum-post-preamble.md.
@@ -914,6 +1166,10 @@ class prompt_builder {
         return implode("\n", $lines);
     }
 
+    // -------------------------------------------------------------------------
+    // Private — text utilities
+    // -------------------------------------------------------------------------
+
     /**
      * Strip HTML and clean a forum post body for LLM consumption.
      *
@@ -1003,12 +1259,15 @@ class prompt_builder {
     // -------------------------------------------------------------------------
 
     /**
-     * Assemble a prompt with context header, prompt template, and content.
+     * Assemble a prompt with context header, optional competency block,
+     * prompt template, and content.
      *
      * Used for student_forum and thread analyses.
      *
      * Structure:
      *   [CONTEXT HEADER]
+     *   ---
+     *   [COMPETENCY BLOCK]        ← only if competencies are resolved
      *   ---
      *   [PROMPT TEMPLATE]
      *   ---
@@ -1020,16 +1279,26 @@ class prompt_builder {
      * @return string           Complete prompt.
      */
     private function assemble_with_context(string $header, string $template, string $content): string {
-        return implode("\n", [
+        $parts = [
             $header,
             '---',
             '',
-            $template,
-            '',
-            '---',
-            '',
-            $content,
-        ]);
+        ];
+
+        // Inject competency block if present.
+        if (!empty($this->competencyblock)) {
+            $parts[] = $this->competencyblock;
+            $parts[] = '---';
+            $parts[] = '';
+        }
+
+        $parts[] = $template;
+        $parts[] = '';
+        $parts[] = '---';
+        $parts[] = '';
+        $parts[] = $content;
+
+        return implode("\n", $parts);
     }
 
     /**
