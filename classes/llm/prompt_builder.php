@@ -47,6 +47,14 @@ defined('MOODLE_INTERNAL') || die();
  * content and injected into the context header — the LLM reads them directly rather
  * than estimating them.
  *
+ * For student_forum analyses, the prompt includes the full conversational context
+ * from all threads the assessed learner participated in. Peer learners are
+ * pseudonymised as Peer A, Peer B, etc. Non-student participants (instructors,
+ * managers, facilitators) are labelled [INSTRUCTOR]. The assessed learner is
+ * labelled [ASSESSED LEARNER]. Only the assessed learner's posts are scored;
+ * all other posts provide conversational context for accurate evaluation of
+ * peer-dependent rubrics (Critical Discourse, Peer Advancement, etc.).
+ *
  * Final structure — student_forum / thread analyses:
  *
  *   [CONTEXT HEADER]          ← includes discussion_model, word_count, character_count
@@ -155,11 +163,15 @@ class prompt_builder {
     /**
      * Build the complete prompt for a learner's full participation in a forum.
      *
-     * Fetches all posts by the given user in the given forum, groups them by
-     * discussion thread, annotates each post with its word count and
-     * substantive/short classification. Computes exact word_count and
-     * character_count totals and injects them into the context header along
-     * with the discussion_model.
+     * Fetches all posts from all threads the assessed learner participated in,
+     * providing full conversational context. The assessed learner is labelled
+     * [ASSESSED LEARNER], peer students are pseudonymised as Peer A, Peer B,
+     * etc., and non-student participants (instructors, managers) are labelled
+     * [INSTRUCTOR]. Only the assessed learner's posts are scored; all other
+     * posts provide context for accurate peer-dependent rubric evaluation.
+     *
+     * Post composition stats (word_count, character_count) in the context
+     * header reflect only the assessed learner's posts.
      *
      * Uses the forum discussion analyzer prompt — not the session analyzer
      * or any course/forum-level prompt override.
@@ -176,28 +188,79 @@ class prompt_builder {
             return '';
         }
 
+        // Step 1: Find all discussion IDs the assessed learner participated in.
+        $sql = "SELECT DISTINCT fp.discussion
+                  FROM {forum_posts} fp
+                  JOIN {forum_discussions} fd ON fd.id = fp.discussion
+                 WHERE fd.forum = :forumid
+                   AND fp.userid = :userid";
+
+        $discussionids = $DB->get_fieldset_sql($sql, [
+            'forumid' => $this->forumid,
+            'userid'  => $userid,
+        ]);
+
+        if (empty($discussionids)) {
+            return '';
+        }
+
+        // Step 2: Fetch ALL posts from those discussions (full thread context).
+        list($insql, $params) = $DB->get_in_or_equal($discussionids, SQL_PARAMS_NAMED);
         $sql = "SELECT fp.id, fp.discussion, fp.userid, fp.message,
                        fp.subject, fp.created,
                        fd.name AS discussion_name
                   FROM {forum_posts} fp
                   JOIN {forum_discussions} fd ON fd.id = fp.discussion
-                 WHERE fd.forum = :forumid
-                   AND fp.userid = :userid
-              ORDER BY fp.created ASC";
+                 WHERE fp.discussion {$insql}
+              ORDER BY fp.discussion ASC, fp.created ASC";
 
-        $posts = $DB->get_records_sql($sql, [
-            'forumid' => $this->forumid,
-            'userid'  => $userid,
-        ]);
+        $allposts = $DB->get_records_sql($sql, $params);
 
-        if (empty($posts)) {
+        if (empty($allposts)) {
             return '';
         }
 
-        $postsarr = array_values($posts);
-        $stats    = $this->compute_post_stats($postsarr);
-        $header   = $this->build_student_forum_header($forumname, $stats);
-        $content  = $this->format_student_forum_content($postsarr, $forumname);
+        $allpostsarr = array_values($allposts);
+
+        // Step 3: Separate the assessed learner's posts for stats computation.
+        $learnerposts = array_values(array_filter($allpostsarr, function($post) use ($userid) {
+            return (int) $post->userid === $userid;
+        }));
+
+        if (empty($learnerposts)) {
+            return '';
+        }
+
+        // Step 4: Resolve roles for all unique authors in the threads.
+        $authorids = array_unique(array_map(function($post) {
+            return (int) $post->userid;
+        }, $allpostsarr));
+        $rolemap = $this->resolve_author_roles($authorids, $userid);
+
+        // Step 5: Compute stats on the assessed learner's posts only.
+        $stats = $this->compute_post_stats($learnerposts);
+
+        // Step 6: Count context participants.
+        $peercount      = 0;
+        $instructorcount = 0;
+        foreach ($rolemap as $uid => $role) {
+            if ($uid === $userid) {
+                continue;
+            }
+            if ($role === 'instructor') {
+                $instructorcount++;
+            } else {
+                $peercount++;
+            }
+        }
+
+        // Step 7: Build header, format content, assemble.
+        $header  = $this->build_student_forum_header(
+            $forumname, $stats, $peercount, $instructorcount
+        );
+        $content = $this->format_student_forum_content_with_context(
+            $allpostsarr, $forumname, $userid, $rolemap
+        );
 
         return $this->assemble_with_context($header, $this->forumanalyzer, $content);
     }
@@ -460,21 +523,110 @@ class prompt_builder {
     }
 
     // -------------------------------------------------------------------------
+    // Private — role resolution
+    // -------------------------------------------------------------------------
+
+    /**
+     * Resolve the role label for each author in a set of posts.
+     *
+     * Returns a map of userid => role label string:
+     *   - The assessed learner's userid maps to 'assessed'
+     *   - Users with a student-archetype role in the course map to 'peer'
+     *   - All other users (instructors, managers, etc.) map to 'instructor'
+     *
+     * Uses get_archetype_roles('student') for portable role ID resolution.
+     *
+     * @param  int[] $authorids      All unique author user IDs from the posts.
+     * @param  int   $assesseduserid The user ID of the learner being assessed.
+     * @return array                 Map of userid (int) => 'assessed'|'peer'|'instructor'.
+     */
+    private function resolve_author_roles(array $authorids, int $assesseduserid): array {
+        global $DB;
+
+        $rolemap = [];
+
+        // The assessed learner is always labelled 'assessed'.
+        $rolemap[$assesseduserid] = 'assessed';
+
+        // Get student archetype role IDs.
+        $studentroles = get_archetype_roles('student');
+        $studentroleids = [];
+        if (!empty($studentroles)) {
+            $studentroleids = array_map(function($role) {
+                return (int) $role->id;
+            }, $studentroles);
+        }
+
+        // Get the course context for role assignment lookups.
+        $context = \context_course::instance($this->courseid);
+
+        // Resolve each author's role (skip the assessed learner, already set).
+        $otheruserids = array_filter($authorids, function($uid) use ($assesseduserid) {
+            return (int) $uid !== $assesseduserid;
+        });
+
+        if (empty($otheruserids) || empty($studentroleids)) {
+            // If no student roles are defined, treat all others as instructors.
+            foreach ($otheruserids as $uid) {
+                $rolemap[(int) $uid] = empty($studentroleids) ? 'instructor' : 'peer';
+            }
+            return $rolemap;
+        }
+
+        // Batch-check which of the other authors hold a student-archetype role.
+        list($useridinsql, $useridparams) = $DB->get_in_or_equal(
+            array_map('intval', $otheruserids), SQL_PARAMS_NAMED, 'uid'
+        );
+        list($roleinsql, $roleparams) = $DB->get_in_or_equal(
+            $studentroleids, SQL_PARAMS_NAMED, 'rid'
+        );
+
+        $params = array_merge($useridparams, $roleparams, [
+            'contextid' => $context->id,
+        ]);
+
+        $sql = "SELECT DISTINCT userid
+                  FROM {role_assignments}
+                 WHERE userid {$useridinsql}
+                   AND roleid {$roleinsql}
+                   AND contextid = :contextid";
+
+        $studentuserids = $DB->get_fieldset_sql($sql, $params);
+        $studentset = array_flip(array_map('intval', $studentuserids));
+
+        foreach ($otheruserids as $uid) {
+            $uid = (int) $uid;
+            $rolemap[$uid] = isset($studentset[$uid]) ? 'peer' : 'instructor';
+        }
+
+        return $rolemap;
+    }
+
+    // -------------------------------------------------------------------------
     // Private — context header builders
     // -------------------------------------------------------------------------
 
     /**
      * Build the context header for a student_forum analysis.
      *
-     * Includes exact word_count and character_count so the LLM reads them
-     * directly rather than estimating. Includes discussion_model so the LLM
-     * applies the correct Critical Discourse variant.
+     * Includes exact word_count and character_count (assessed learner's posts
+     * only) so the LLM reads them directly rather than estimating. Includes
+     * discussion_model so the LLM applies the correct Critical Discourse
+     * variant. Includes explicit instructions that only [ASSESSED LEARNER]
+     * posts should be scored.
      *
-     * @param  string $forumname Human-readable forum name.
-     * @param  array  $stats     Output of compute_post_stats().
+     * @param  string $forumname        Human-readable forum name.
+     * @param  array  $stats            Output of compute_post_stats() on learner's posts only.
+     * @param  int    $peercount        Number of distinct peer learners in the threads.
+     * @param  int    $instructorcount  Number of distinct instructors/facilitators in the threads.
      * @return string
      */
-    private function build_student_forum_header(string $forumname, array $stats): string {
+    private function build_student_forum_header(
+        string $forumname,
+        array $stats,
+        int $peercount,
+        int $instructorcount
+    ): string {
         $modeldesc = self::MODEL_DESCRIPTIONS[$this->discussionmodel]
             ?? self::MODEL_DESCRIPTIONS[self::MODEL_OPEN_ENGAGEMENT];
 
@@ -486,7 +638,7 @@ class prompt_builder {
             'discussion_model:   ' . $this->discussionmodel,
             'Model description:  ' . $modeldesc,
             '',
-            'Post composition:',
+            'Assessed learner\'s post composition:',
             '  Total posts:      ' . $stats['total_posts'],
             '  Threads:          ' . $stats['thread_count'] . ' discussion thread(s) contributed to',
             '  Substantive (≥'   . self::SUBSTANTIVE_WORD_THRESHOLD . ' words): '
@@ -501,6 +653,22 @@ class prompt_builder {
             'Exact totals (PHP-calculated — use these values directly):',
             '  word_count:       ' . $stats['total_words'],
             '  character_count:  ' . $stats['total_characters'],
+            '',
+            'Conversational context:',
+            '  Peer learners:    ' . $peercount,
+            '  Instructors:      ' . $instructorcount,
+            '',
+            'IMPORTANT — Scoring scope:',
+            'The content below includes the FULL conversational context from all threads',
+            'the assessed learner participated in. Posts are labelled by author role:',
+            '  [ASSESSED LEARNER] — the learner being evaluated. Score ONLY these posts.',
+            '  Peer A, Peer B, etc. — other student participants. Context only; do NOT score.',
+            '  [INSTRUCTOR] — instructor/facilitator posts. Context only; do NOT score.',
+            '',
+            'Peer and instructor posts are provided so you can accurately evaluate how the',
+            'assessed learner engaged with others\' ideas, responded to challenges, built on',
+            'peer contributions, and participated in the broader discourse. Without this',
+            'context, peer-dependent rubrics cannot be scored accurately.',
             '',
             'This is a retrospective assessment of the learner\'s complete participation'
                 . ' in a closed forum discussion. Do not infer activity beyond what is present below.',
@@ -559,22 +727,31 @@ class prompt_builder {
     // -------------------------------------------------------------------------
 
     /**
-     * Format a learner's complete forum participation grouped by thread.
+     * Format the full conversational context for a student_forum analysis.
      *
+     * Includes all posts from all threads the assessed learner participated in.
      * Posts are grouped by discussion thread, presented chronologically within
-     * each thread. Each post is annotated with its word count and substantive/short
-     * classification so the LLM can apply weighting rules without counting itself.
+     * each thread. Each post is annotated with:
+     *   - Author role label: [ASSESSED LEARNER], Peer A/B/C, or [INSTRUCTOR]
+     *   - Word count and substantive/short classification
      *
-     * @param  \stdClass[] $posts     All posts by the learner, ordered by created ASC.
-     *                                Each record must have: id, discussion, message,
-     *                                created, discussion_name.
-     * @param  string      $forumname Forum name (used in section header).
+     * @param  \stdClass[] $allposts   All posts from participated threads, ordered
+     *                                 by discussion ASC, created ASC.
+     * @param  string      $forumname  Forum name (used in section header).
+     * @param  int         $userid     The assessed learner's user ID.
+     * @param  array       $rolemap    Map of userid => 'assessed'|'peer'|'instructor'
+     *                                 from resolve_author_roles().
      * @return string
      */
-    private function format_student_forum_content(array $posts, string $forumname): string {
+    private function format_student_forum_content_with_context(
+        array $allposts,
+        string $forumname,
+        int $userid,
+        array $rolemap
+    ): string {
         // Group posts by discussion.
         $threads = [];
-        foreach ($posts as $post) {
+        foreach ($allposts as $post) {
             $did = $post->discussion;
             if (!isset($threads[$did])) {
                 $threads[$did] = [
@@ -584,6 +761,10 @@ class prompt_builder {
             }
             $threads[$did]['posts'][] = $post;
         }
+
+        // Build pseudonym map for peers (Peer A, Peer B, etc.).
+        $peermap = [];
+        $peerletter = 'A';
 
         $lines     = [];
         $lines[]   = '## LEARNER FORUM PARTICIPATION';
@@ -597,6 +778,23 @@ class prompt_builder {
             $threadnum++;
 
             foreach ($thread['posts'] as $post) {
+                $uid  = (int) ($post->userid ?? 0);
+                $role = $rolemap[$uid] ?? 'peer';
+
+                // Determine author label.
+                if ($role === 'assessed') {
+                    $author = '[ASSESSED LEARNER]';
+                } else if ($role === 'instructor') {
+                    $author = '[INSTRUCTOR]';
+                } else {
+                    // Peer — assign a consistent pseudonym.
+                    if (!isset($peermap[$uid])) {
+                        $peermap[$uid] = 'Peer ' . $peerletter;
+                        $peerletter++;
+                    }
+                    $author = $peermap[$uid];
+                }
+
                 $body      = $this->clean_post_body($post->message ?? '');
                 $wordcount = $this->count_words($body);
                 $date      = userdate($post->created,
@@ -605,7 +803,7 @@ class prompt_builder {
                     ? '[' . $wordcount . ' words — substantive]'
                     : '[' . $wordcount . ' words — short]';
 
-                $lines[] = '--- Post · ' . $date . ' · ' . $label . ' ---';
+                $lines[] = '--- ' . $author . ' · ' . $date . ' · ' . $label . ' ---';
                 $lines[] = $body;
                 $lines[] = '';
             }
