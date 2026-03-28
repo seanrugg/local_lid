@@ -26,9 +26,10 @@
  * because it is a large text field and may be course-overridden.
  *
  * Section order:
- *   1. LLM API connection
- *   2. Prompt template (textarea + file upload + lock toggle)
- *   3. Analysis triggers and cron schedule
+ *   1. LID enablement defaults (force disable, default enabled, competencies default)
+ *   2. LLM API connection
+ *   3. Prompt template
+ *   4. Analysis triggers and cron schedule
  *
  * @package    local_lid
  * @copyright  2026 Learning Intelligence Dashboard Project Contributors
@@ -73,6 +74,14 @@ if ($hassiteconfig) {
         'local_lid/lid_default_enabled',
         new lang_string('settings_lid_default_enabled', 'local_lid'),
         new lang_string('settings_lid_default_enabled_desc', 'local_lid'),
+        '0'
+    ));
+
+    // Competencies enabled by default for new courses.
+    $settings->add(new admin_setting_configcheckbox(
+        'local_lid/competencies_enabled_default',
+        new lang_string('settings_competencies_enabled_default', 'local_lid'),
+        new lang_string('settings_competencies_enabled_default_desc', 'local_lid'),
         '0'
     ));
 
@@ -138,7 +147,7 @@ if ($hassiteconfig) {
     ));
 
     // =========================================================================
-    // SECTION 2 — Prompt template
+    // SECTION 3 — Prompt template
     // =========================================================================
 
     $settings->add(new admin_setting_heading(
@@ -175,7 +184,7 @@ if ($hassiteconfig) {
     ));
 
     // =========================================================================
-    // SECTION 3 — Analysis triggers and scheduling
+    // SECTION 4 — Analysis triggers and scheduling
     // =========================================================================
 
     $settings->add(new admin_setting_heading(
