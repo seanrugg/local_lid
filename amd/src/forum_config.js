@@ -1,14 +1,33 @@
+// This file is part of Moodle - https://moodle.org/
+//
+// Moodle is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// Moodle is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with Moodle.  If not, see <https://www.gnu.org/licenses/>.
+
 /**
  * Forum configuration AMD module for local_lid.
  *
  * Handles the per-forum LID enable/disable toggle, discussion model selector,
- * and the optional forum-level prompt override editor.
+ * competency selector, and the optional forum-level prompt override editor.
  *
  * Features:
  *   Toggle switch        — enables/disables LID for the forum. Saved via AJAX.
  *   Discussion model     — radio button group selecting the participation model.
  *                          Saved via a dedicated "Save assessment model" button.
  *                          Shown only when LID is enabled.
+ *   Competency selector  — radio mode (inherit/exclude/specific) + checkbox list.
+ *                          Saved via a dedicated "Save competency settings" button.
+ *                          Shown only when LID is enabled and course competencies
+ *                          are active.
  *   Prompt override      — if prompt is not locked, shows the prompt_editor
  *                          inline for forum-level customisation.
  *   Confirmation         — when disabling a forum that has existing analyses,
@@ -21,16 +40,24 @@
  *        data-courseid="N"
  *        data-enabled="0|1"
  *        data-discussion-model="open_engagement|independent_first|structured_debate"
+ *        data-competency-mode="inherit|exclude|specific"
+ *        data-competency-ids="[3,7]"
  *        data-url="...ajax.php...">
  *
  *     <input type="checkbox" class="lid-forum-enable-toggle" ...>
  *     <div class="lid-forum-config-status"></div>
  *
  *     <div class="lid-forum-model-section [lid-forum-prompt-hidden]">
- *       <input type="radio" class="lid-forum-model-radio" name="lid_discussion_model_N" value="...">
- *       ...
+ *       <input type="radio" class="lid-forum-model-radio" ...>
  *       <button class="lid-model-save-btn">Save assessment model</button>
  *       <span class="lid-model-save-status"></span>
+ *     </div>
+ *
+ *     <div class="lid-forum-competency-section [lid-forum-prompt-hidden]">
+ *       <input type="radio" class="lid-competency-mode-radio" ...>
+ *       <input type="checkbox" class="lid-competency-checkbox" ...>
+ *       <button class="lid-competency-save-btn">Save competency settings</button>
+ *       <span class="lid-competency-save-status"></span>
  *     </div>
  *
  *     <div class="lid-forum-prompt-section [lid-forum-prompt-hidden]">
@@ -71,15 +98,16 @@ define(['local_lid/prompt_editor'], function(PromptEditor) {
      * @param {HTMLElement} wrapper
      */
     function initForumConfig(wrapper) {
-        var forumid       = parseInt(wrapper.dataset.forumid,  10);
-        var courseid      = parseInt(wrapper.dataset.courseid, 10);
-        var ajaxUrl       = wrapper.dataset.url;
-        var toggle        = wrapper.querySelector('.lid-forum-enable-toggle');
-        var statusEl      = wrapper.querySelector('.lid-forum-config-status');
-        var promptSection = wrapper.querySelector('.lid-forum-prompt-section');
-        var modelSection  = wrapper.querySelector('.lid-forum-model-section');
-        var modelSaveBtn  = wrapper.querySelector('.lid-model-save-btn');
-        var modelStatus   = wrapper.querySelector('.lid-model-save-status');
+        var forumid            = parseInt(wrapper.dataset.forumid,  10);
+        var courseid           = parseInt(wrapper.dataset.courseid, 10);
+        var ajaxUrl            = wrapper.dataset.url;
+        var toggle             = wrapper.querySelector('.lid-forum-enable-toggle');
+        var statusEl           = wrapper.querySelector('.lid-forum-config-status');
+        var promptSection      = wrapper.querySelector('.lid-forum-prompt-section');
+        var modelSection       = wrapper.querySelector('.lid-forum-model-section');
+        var competencySection  = wrapper.querySelector('.lid-forum-competency-section');
+        var modelSaveBtn       = wrapper.querySelector('.lid-model-save-btn');
+        var modelStatus        = wrapper.querySelector('.lid-model-save-status');
 
         if (!toggle || !forumid || !courseid) {
             return;
@@ -88,6 +116,7 @@ define(['local_lid/prompt_editor'], function(PromptEditor) {
         // Reflect initial visibility.
         updateSectionVisibility(promptSection, toggle.checked);
         updateSectionVisibility(modelSection,  toggle.checked);
+        updateSectionVisibility(competencySection, toggle.checked);
         updateStatusBadge(statusEl, toggle.checked);
 
         // ---- Enable/disable toggle ----
@@ -117,6 +146,7 @@ define(['local_lid/prompt_editor'], function(PromptEditor) {
                     if (success) {
                         updateSectionVisibility(promptSection, enabling);
                         updateSectionVisibility(modelSection,  enabling);
+                        updateSectionVisibility(competencySection, enabling);
                         updateStatusBadge(statusEl, enabling);
                         updateNavTabVisibility(enabling);
                     } else {
@@ -170,15 +200,114 @@ define(['local_lid/prompt_editor'], function(PromptEditor) {
         var radios = wrapper.querySelectorAll('.lid-forum-model-radio');
         radios.forEach(function(radio) {
             radio.addEventListener('change', function() {
-                // Update visual selection state immediately on click.
-                // The actual save happens when the save button is clicked.
                 updateModelOptionStyles(wrapper, radio.value);
             });
         });
+
+        // ---- Competency mode radios — show/hide checklist ----
+        initCompetencySelector(wrapper, forumid, courseid, ajaxUrl);
     }
 
     // =========================================================================
-    // AJAX save
+    // Competency selector
+    // =========================================================================
+
+    /**
+     * Wire up competency mode radios, checklist, and save button.
+     *
+     * @param {HTMLElement} wrapper
+     * @param {number}      forumid
+     * @param {number}      courseid
+     * @param {string}      ajaxUrl
+     */
+    function initCompetencySelector(wrapper, forumid, courseid, ajaxUrl) {
+        var modeRadios    = wrapper.querySelectorAll('.lid-competency-mode-radio');
+        var checklist     = wrapper.querySelector('.lid-competency-checklist');
+        var saveBtn       = wrapper.querySelector('.lid-competency-save-btn');
+        var statusEl      = wrapper.querySelector('.lid-competency-save-status');
+
+        if (!modeRadios.length) {
+            return; // No competency section on this page.
+        }
+
+        // Toggle checklist visibility when mode changes.
+        modeRadios.forEach(function(radio) {
+            radio.addEventListener('change', function() {
+                if (checklist) {
+                    if (radio.value === 'specific') {
+                        checklist.classList.remove('lid-forum-prompt-hidden');
+                    } else {
+                        checklist.classList.add('lid-forum-prompt-hidden');
+                    }
+                }
+            });
+        });
+
+        // Save button.
+        if (saveBtn) {
+            saveBtn.addEventListener('click', function() {
+                var mode = getSelectedCompetencyMode(wrapper);
+                var ids  = getSelectedCompetencyIds(wrapper);
+
+                saveBtn.disabled = true;
+                if (statusEl) {
+                    statusEl.textContent = 'Saving…';
+                    statusEl.style.color = '#5a7090';
+                }
+
+                saveForumCompetencies(
+                    forumid, courseid, mode, ids, ajaxUrl,
+                    function(success) {
+                        saveBtn.disabled = false;
+                        if (success) {
+                            wrapper.dataset.competencyMode = mode;
+                            wrapper.dataset.competencyIds = JSON.stringify(ids);
+                            if (statusEl) {
+                                statusEl.textContent = 'Competency settings saved.';
+                                statusEl.style.color = 'var(--lid-accent3)';
+                                setTimeout(function() {
+                                    statusEl.textContent = '';
+                                }, 3000);
+                            }
+                        } else {
+                            if (statusEl) {
+                                statusEl.textContent = 'Save failed.';
+                                statusEl.style.color = '#ff3c3c';
+                            }
+                        }
+                    }
+                );
+            });
+        }
+    }
+
+    /**
+     * Get the currently selected competency mode.
+     *
+     * @param  {HTMLElement} wrapper
+     * @return {string}      'inherit' | 'exclude' | 'specific'
+     */
+    function getSelectedCompetencyMode(wrapper) {
+        var checked = wrapper.querySelector('.lid-competency-mode-radio:checked');
+        return checked ? checked.value : 'inherit';
+    }
+
+    /**
+     * Get the selected competency IDs from the checkbox list.
+     *
+     * @param  {HTMLElement} wrapper
+     * @return {number[]}    Array of selected competency IDs.
+     */
+    function getSelectedCompetencyIds(wrapper) {
+        var ids = [];
+        wrapper.querySelectorAll('.lid-competency-checkbox:checked').forEach(function(cb) {
+            ids.push(parseInt(cb.value, 10));
+        });
+        return ids;
+    }
+
+    // =========================================================================
+    // AJAX — forum config save
     // =========================================================================
 
     /**
@@ -251,13 +380,55 @@ define(['local_lid/prompt_editor'], function(PromptEditor) {
     }
 
     // =========================================================================
+    // AJAX — forum competency save
+    // =========================================================================
+
+    /**
+     * Save the forum competency selection via ajax.php save_forum_competencies.
+     *
+     * @param {number}   forumid
+     * @param {number}   courseid
+     * @param {string}   mode     'inherit' | 'exclude' | 'specific'
+     * @param {number[]} ids      Selected competency IDs (used when mode = 'specific').
+     * @param {string}   ajaxUrl
+     * @param {Function} onDone   Called with (success: bool).
+     */
+    function saveForumCompetencies(forumid, courseid, mode, ids, ajaxUrl, onDone) {
+        var body = new URLSearchParams();
+        body.set('action',          'save_forum_competencies');
+        body.set('forumid',         forumid);
+        body.set('courseid',        courseid);
+        body.set('competency_mode', mode);
+        body.set('competency_ids',  JSON.stringify(ids));
+        body.set('sesskey',         M.cfg.sesskey);
+
+        fetch(ajaxUrl, {
+            method:  'POST',
+            headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+            body:    body.toString(),
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.error) {
+                showToast(data.message || 'Save failed.', 'error');
+                onDone(false);
+            } else {
+                showToast(data.message || 'Competency settings saved.', 'success');
+                onDone(true);
+            }
+        })
+        .catch(function() {
+            showToast('Save failed. Check your connection.', 'error');
+            onDone(false);
+        });
+    }
+
+    // =========================================================================
     // UI helpers
     // =========================================================================
 
     /**
-     * Show or hide a section (model selector or prompt section) based on
-     * whether LID is enabled. Hidden sections are visually removed to
-     * reduce noise when LID is disabled for the forum.
+     * Show or hide a section based on whether LID is enabled.
      *
      * @param {HTMLElement|null} section
      * @param {boolean}          enabled
@@ -291,9 +462,6 @@ define(['local_lid/prompt_editor'], function(PromptEditor) {
 
     /**
      * Update the visual selection state of model option cards.
-     *
-     * Iterates all radio buttons in the wrapper and applies/removes the
-     * selected styling class on their parent label.
      *
      * @param {HTMLElement} wrapper
      * @param {string}      selectedValue
@@ -329,9 +497,6 @@ define(['local_lid/prompt_editor'], function(PromptEditor) {
 
     /**
      * Update the LID nav tab visibility in the activity navigation.
-     *
-     * When LID is enabled, the nav tab should appear; when disabled, it
-     * should be hidden. This avoids a full page reload to reflect the change.
      *
      * @param {boolean} enabled
      */
