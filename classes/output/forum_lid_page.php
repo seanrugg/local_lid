@@ -39,6 +39,12 @@ defined('MOODLE_INTERNAL') || die();
  *   - Top Bloom's level and top competency score derived from their student_forum JSON
  *   - Thread-level analysis cards for each discussion they participated in
  *
+ * Access control:
+ *   - Users with local/lid:viewpeeranalysis see all student tabs (full instructor view).
+ *   - Users without viewpeeranalysis (typically students) see only the forum
+ *     aggregate tab and their own student tab. No peer data is sent to the
+ *     template — filtering is server-side to prevent data leakage.
+ *
  * Data structure exported to template:
  *
  *   forumid                int
@@ -56,7 +62,7 @@ defined('MOODLE_INTERNAL') || die();
  *   stale_notice           bool     — true if any student row is stale
  *   last_updated           string
  *   analysis_pending       bool     — true if any rows are pending/processing
- *   students               array
+ *   students               array    — filtered by viewpeeranalysis capability
  *     userid               int
  *     fullname             string
  *     userpic              string
@@ -78,6 +84,8 @@ defined('MOODLE_INTERNAL') || die();
  *       status             string
  *   can_trigger            bool
  *   can_configure          bool
+ *   can_view_peers         bool     — true if user can see all student tabs
+ *   owndata_notice         string   — notice shown when peer data is hidden (or '')
  *   trigger_url            string
  *   config_url             string
  */
@@ -110,7 +118,7 @@ class forum_lid_page implements \renderable, \templatable {
      * @return array
      */
     public function export_for_template(\renderer_base $output): array {
-        global $DB;
+        global $DB, $USER;
 
         /** @var renderer $output */
         $forumid      = (int) $this->cm->instance;
@@ -118,6 +126,7 @@ class forum_lid_page implements \renderable, \templatable {
         $cmid         = (int) $this->cm->id;
         $cantrigger   = has_capability('local/lid:triggeranalysis', $this->context);
         $canconfigure = has_capability('local/lid:configureforum', $this->context);
+        $canviewpeers = has_capability('local/lid:viewpeeranalysis', $this->context);
 
         $config = $DB->get_record('local_lid_forum_config', ['forumid' => $forumid]);
         $forum  = $DB->get_record('forum', ['id' => $forumid], 'id, name');
@@ -181,6 +190,8 @@ class forum_lid_page implements \renderable, \templatable {
                 'students'              => [],
                 'can_trigger'           => $cantrigger,
                 'can_configure'         => $canconfigure,
+                'can_view_peers'        => $canviewpeers,
+                'owndata_notice'        => '',
                 'trigger_url'           => $triggerurl,
                 'config_url'            => $configurl,
             ];
@@ -229,6 +240,20 @@ class forum_lid_page implements \renderable, \templatable {
         $stalefound   = false;
         $pendingfound = false;
         $students     = [];
+
+        // If the user cannot view peer data, filter student rows to only
+        // include their own record. This is server-side filtering — no peer
+        // data is ever sent to the template or rendered in HTML.
+        $currentuserid = (int) $USER->id;
+        if (!$canviewpeers) {
+            $filteredrows = [];
+            foreach ($studentrows as $key => $srow) {
+                if ((int) $srow->userid === $currentuserid) {
+                    $filteredrows[$key] = $srow;
+                }
+            }
+            $studentrows = $filteredrows;
+        }
 
         foreach ($studentrows as $srow) {
             $userid = (int) $srow->userid;
@@ -317,6 +342,12 @@ class forum_lid_page implements \renderable, \templatable {
 
         usort($students, fn($a, $b) => $b['top_score'] <=> $a['top_score']);
 
+        // Build the own-data notice for users who cannot see peer data.
+        $owndatanotice = '';
+        if (!$canviewpeers) {
+            $owndatanotice = get_string('dashboard_forum_owndata_notice', 'local_lid');
+        }
+
         return [
             'forumid'               => $forumid,
             'forumname'             => $forum ? format_string($forum->name) : '',
@@ -335,6 +366,8 @@ class forum_lid_page implements \renderable, \templatable {
             'students'              => $students,
             'can_trigger'           => $cantrigger,
             'can_configure'         => $canconfigure,
+            'can_view_peers'        => $canviewpeers,
+            'owndata_notice'        => $owndatanotice,
             'trigger_url'           => $triggerurl,
             'config_url'            => $configurl,
         ];
