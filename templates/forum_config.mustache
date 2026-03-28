@@ -18,6 +18,12 @@
         inherited_from       string   — 'course' | 'site' (where prompt comes from)
         discussion_model     string   — current model: independent_first | open_engagement | structured_debate
         discussion_models    array    — [{value, label, description, selected}] for selector
+        competency_enabled   bool     — true if course-level competencies are enabled
+        competency_site_ok   bool     — true if Moodle competency subsystem is enabled
+        competency_mode      string   — 'inherit' | 'exclude' | 'specific'
+        competency_ids_json  string   — JSON array of selected competency IDs (or '[]')
+        course_competencies  array    — [{id, shortname, description, selected}] for multi-select
+        has_competencies     bool     — true if course has linked competencies
 }}
 {{> local_lid/lid_styles}}
 
@@ -27,6 +33,8 @@
      data-enabled="{{#enabled}}1{{/enabled}}{{^enabled}}0{{/enabled}}"
      data-has-data="{{#has_data}}1{{/has_data}}{{^has_data}}0{{/has_data}}"
      data-discussion-model="{{discussion_model}}"
+     data-competency-mode="{{competency_mode}}"
+     data-competency-ids="{{competency_ids_json}}"
      data-url="{{ajax_url}}"
      style="max-width:800px">
 
@@ -148,6 +156,115 @@
 
     </div>
 
+    {{! ── Competency selector ─────────────────────────────────────────── }}
+    {{! Only shown when LID is enabled AND course competencies feature is active. }}
+    {{#competency_site_ok}}
+    <div class="lid-forum-competency-section{{^enabled}} lid-forum-prompt-hidden{{/enabled}}"
+         style="margin-bottom:16px;padding:16px;background:var(--lid-surface);
+                border:1px solid var(--lid-border);border-radius:var(--lid-radius)">
+
+        <div class="lid-panel-title" style="margin-bottom:4px">
+            {{#str}}forum_config_competencies_heading, local_lid{{/str}}
+        </div>
+
+        {{^competency_enabled}}
+        {{! Competencies disabled at course level }}
+        <p class="lid-mono" style="font-size:10px;color:var(--lid-muted);line-height:1.6">
+            {{#str}}forum_config_competencies_disabled, local_lid{{/str}}
+        </p>
+        {{/competency_enabled}}
+
+        {{#competency_enabled}}
+        {{^has_competencies}}
+        {{! No competencies linked to course }}
+        <p class="lid-mono" style="font-size:10px;color:var(--lid-muted);line-height:1.6">
+            {{#str}}forum_config_competencies_none_in_course, local_lid{{/str}}
+        </p>
+        {{/has_competencies}}
+
+        {{#has_competencies}}
+        <p class="lid-mono" style="font-size:10px;color:var(--lid-muted);
+                                   margin-bottom:12px;line-height:1.6">
+            {{#str}}forum_config_competencies_desc, local_lid{{/str}}
+        </p>
+
+        {{! Mode selector: inherit / exclude / specific }}
+        <div class="lid-competency-mode-options"
+             style="display:flex;flex-direction:column;gap:6px;margin-bottom:12px">
+
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;
+                          font-size:12px;color:var(--lid-text)">
+                <input type="radio" class="lid-competency-mode-radio"
+                       name="lid_competency_mode_{{forumid}}"
+                       value="inherit"
+                       {{#competency_mode_inherit}}checked{{/competency_mode_inherit}}
+                       style="accent-color:var(--lid-accent)">
+                {{#str}}forum_config_competencies_inherit, local_lid{{/str}}
+            </label>
+
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;
+                          font-size:12px;color:var(--lid-text)">
+                <input type="radio" class="lid-competency-mode-radio"
+                       name="lid_competency_mode_{{forumid}}"
+                       value="exclude"
+                       {{#competency_mode_exclude}}checked{{/competency_mode_exclude}}
+                       style="accent-color:var(--lid-accent)">
+                {{#str}}forum_config_competencies_exclude_all, local_lid{{/str}}
+            </label>
+
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;
+                          font-size:12px;color:var(--lid-text)">
+                <input type="radio" class="lid-competency-mode-radio"
+                       name="lid_competency_mode_{{forumid}}"
+                       value="specific"
+                       {{#competency_mode_specific}}checked{{/competency_mode_specific}}
+                       style="accent-color:var(--lid-accent)">
+                {{#str}}forum_config_competencies_specific, local_lid{{/str}}
+            </label>
+        </div>
+
+        {{! Competency checklist — only visible when mode = specific }}
+        <div class="lid-competency-checklist{{^competency_mode_specific}} lid-forum-prompt-hidden{{/competency_mode_specific}}"
+             style="margin-bottom:12px;padding:10px 14px;
+                    background:var(--lid-surface2);border:1px solid var(--lid-border);
+                    border-radius:4px;max-height:200px;overflow-y:auto">
+
+            {{#course_competencies}}
+            <label style="display:flex;align-items:flex-start;gap:8px;
+                          padding:4px 0;cursor:pointer;font-size:11px;color:var(--lid-text)">
+                <input type="checkbox"
+                       class="lid-competency-checkbox"
+                       value="{{id}}"
+                       {{#selected}}checked{{/selected}}
+                       style="margin-top:2px;accent-color:var(--lid-accent);flex-shrink:0">
+                <span>
+                    <strong>{{shortname}}</strong>
+                    {{#description}}
+                    <span class="lid-mono" style="font-size:10px;color:var(--lid-muted)">
+                        — {{description}}
+                    </span>
+                    {{/description}}
+                </span>
+            </label>
+            {{/course_competencies}}
+
+        </div>
+
+        {{! Save competencies button }}
+        <div style="display:flex;align-items:center;gap:10px">
+            <button class="lid-btn lid-btn-primary lid-competency-save-btn"
+                    style="font-size:10px">
+                Save competency settings
+            </button>
+            <span class="lid-competency-save-status lid-mono"
+                  style="font-size:10px;color:var(--lid-muted)"></span>
+        </div>
+        {{/has_competencies}}
+        {{/competency_enabled}}
+
+    </div>
+    {{/competency_site_ok}}
+
     {{! ── Prompt override section ─────────────────────────────────────── }}
     {{#can_edit_prompt}}
     <div class="lid-forum-prompt-section{{^enabled}} lid-forum-prompt-hidden{{/enabled}}"
@@ -175,60 +292,16 @@
                 {{#str}}forum_config_prompt_desc, local_lid{{/str}}
             </p>
 
-            {{! Prompt editor wrapper — initialised by prompt_editor.js }}
-            <div class="lid-prompt-editor"
-                 data-courseid="{{courseid}}"
-                 data-locked="0">
-
-                <textarea id="lid-prompt-textarea-forum-{{forumid}}"
+            {{! The prompt_editor partial is loaded here — it provides
+                the textarea, file upload, save, and reset controls. }}
+            <div class="lid-prompt-editor" data-courseid="{{courseid}}" data-locked="0">
+                <textarea id="lid-prompt-textarea"
                           class="lid-prompt-textarea"
-                          rows="14"
-                          style="width:100%;box-sizing:border-box;
-                                 background:var(--lid-surface2);
-                                 border:1px solid var(--lid-border);
-                                 color:var(--lid-text);
-                                 font-family:'DM Mono',monospace;
-                                 font-size:11px;line-height:1.6;
-                                 padding:12px;border-radius:4px;
-                                 resize:vertical;outline:none;"
-                          >{{prompt_value}}</textarea>
-
-                <div class="lid-prompt-footer"
-                     style="display:flex;align-items:center;justify-content:space-between;
-                            flex-wrap:wrap;gap:8px;margin-top:8px">
-
-                    <span class="lid-prompt-charcount lid-mono"
-                          style="font-size:10px;color:var(--lid-muted)">
-                    </span>
-
-                    <div class="lid-prompt-actions"
-                         style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-
-                        <label class="lid-btn lid-btn-secondary"
-                               style="font-size:10px;cursor:pointer">
-                            Upload .md
-                            <input type="file"
-                                   class="lid-prompt-file-input"
-                                   accept=".md"
-                                   style="position:absolute;width:1px;height:1px;
-                                          opacity:0;overflow:hidden">
-                        </label>
-
-                        {{#has_prompt_override}}
-                        <button class="lid-btn lid-btn-secondary lid-prompt-reset-course"
-                                style="font-size:10px">
-                            {{#str}}prompt_reset_course, local_lid{{/str}}
-                        </button>
-                        {{/has_prompt_override}}
-
-                        <button class="lid-btn lid-btn-primary lid-prompt-save"
-                                data-forumid="{{forumid}}"
-                                style="font-size:10px">
-                            {{#str}}prompt_saved, local_lid{{/str}}
-                        </button>
-
-                    </div>
-                </div>
+                          rows="12"
+                          style="width:100%;font-family:'DM Mono',monospace;font-size:11px;
+                                 line-height:1.6;padding:12px;resize:vertical;
+                                 background:var(--lid-surface2);color:var(--lid-text);
+                                 border:1px solid var(--lid-border);border-radius:4px">{{prompt_value}}</textarea>
             </div>
 
         </div>
