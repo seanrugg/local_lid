@@ -88,6 +88,21 @@ defined('MOODLE_INTERNAL') || die();
  *   owndata_notice         string   — notice shown when peer data is hidden (or '')
  *   trigger_url            string
  *   config_url             string
+ *
+ *   Competency variables (v0.6.0):
+ *   competency_site_ok     bool     — true if Moodle competency subsystem is enabled
+ *   competency_enabled     bool     — true if competencies enabled at course level
+ *                                     (course setting with site-default fallback)
+ *   has_competencies       bool     — true if course has linked competencies
+ *   competency_mode        string   — 'inherit' | 'exclude' | 'specific'
+ *                                     derived from local_lid_forum_config.competency_ids
+ *   competency_mode_inherit bool    — Mustache conditional helper
+ *   competency_mode_exclude bool    — Mustache conditional helper
+ *   competency_mode_specific bool   — Mustache conditional helper
+ *   competency_ids_json    string   — raw JSON array from DB column (or '[]')
+ *   course_competencies    array    — [{id, shortname, description, selected}]
+ *                                     for the checklist; selected=true when competency_mode
+ *                                     is 'specific' and the ID appears in competency_ids_json
  */
 class forum_lid_page implements \renderable, \templatable {
 
@@ -171,29 +186,44 @@ class forum_lid_page implements \renderable, \templatable {
             'forumid' => $forumid,
         ]))->out(false);
 
+        // Resolve competency context variables (v0.6.0).
+        // These are included in both the disabled and enabled return paths so
+        // the template always receives all expected keys.
+        $competencydata = $this->resolve_competency_context($courseid, $config);
+
         if (!$lidenabled) {
             return [
-                'forumid'               => $forumid,
-                'forumname'             => $forum ? format_string($forum->name) : '',
-                'courseid'              => $courseid,
-                'cmid'                  => $cmid,
-                'lid_enabled'           => false,
-                'disabled_notice'       => get_string('forum_disabled_notice', 'local_lid'),
-                'discussion_model'      => $discussionmodel,
-                'discussion_model_label' => $discussionmodellabel,
-                'discussion_models'     => $discussionmodels,
-                'aggregate_html'        => '',
-                'has_aggregate'         => false,
-                'stale_notice'          => false,
-                'last_updated'          => '',
-                'analysis_pending'      => false,
-                'students'              => [],
-                'can_trigger'           => $cantrigger,
-                'can_configure'         => $canconfigure,
-                'can_view_peers'        => $canviewpeers,
-                'owndata_notice'        => '',
-                'trigger_url'           => $triggerurl,
-                'config_url'            => $configurl,
+                'forumid'                  => $forumid,
+                'forumname'                => $forum ? format_string($forum->name) : '',
+                'courseid'                 => $courseid,
+                'cmid'                     => $cmid,
+                'lid_enabled'              => false,
+                'disabled_notice'          => get_string('forum_disabled_notice', 'local_lid'),
+                'discussion_model'         => $discussionmodel,
+                'discussion_model_label'   => $discussionmodellabel,
+                'discussion_models'        => $discussionmodels,
+                'aggregate_html'           => '',
+                'has_aggregate'            => false,
+                'stale_notice'             => false,
+                'last_updated'             => '',
+                'analysis_pending'         => false,
+                'students'                 => [],
+                'can_trigger'              => $cantrigger,
+                'can_configure'            => $canconfigure,
+                'can_view_peers'           => $canviewpeers,
+                'owndata_notice'           => '',
+                'trigger_url'              => $triggerurl,
+                'config_url'               => $configurl,
+                // Competency keys — safe defaults for disabled forum.
+                'competency_site_ok'       => $competencydata['competency_site_ok'],
+                'competency_enabled'       => $competencydata['competency_enabled'],
+                'has_competencies'         => $competencydata['has_competencies'],
+                'competency_mode'          => $competencydata['competency_mode'],
+                'competency_mode_inherit'  => $competencydata['competency_mode_inherit'],
+                'competency_mode_exclude'  => $competencydata['competency_mode_exclude'],
+                'competency_mode_specific' => $competencydata['competency_mode_specific'],
+                'competency_ids_json'      => $competencydata['competency_ids_json'],
+                'course_competencies'      => $competencydata['course_competencies'],
             ];
         }
 
@@ -349,33 +379,190 @@ class forum_lid_page implements \renderable, \templatable {
         }
 
         return [
-            'forumid'               => $forumid,
-            'forumname'             => $forum ? format_string($forum->name) : '',
-            'courseid'              => $courseid,
-            'cmid'                  => $cmid,
-            'lid_enabled'           => true,
-            'disabled_notice'       => '',
-            'discussion_model'      => $discussionmodel,
-            'discussion_model_label' => $discussionmodellabel,
-            'discussion_models'     => $discussionmodels,
-            'aggregate_html'        => $aggregatehtml,
-            'has_aggregate'         => !empty($forumanalysis),
-            'stale_notice'          => $stalefound,
-            'last_updated'          => $lastmod ? userdate($lastmod) : '',
-            'analysis_pending'      => $pendingfound,
-            'students'              => $students,
-            'can_trigger'           => $cantrigger,
-            'can_configure'         => $canconfigure,
-            'can_view_peers'        => $canviewpeers,
-            'owndata_notice'        => $owndatanotice,
-            'trigger_url'           => $triggerurl,
-            'config_url'            => $configurl,
+            'forumid'                  => $forumid,
+            'forumname'                => $forum ? format_string($forum->name) : '',
+            'courseid'                 => $courseid,
+            'cmid'                     => $cmid,
+            'lid_enabled'              => true,
+            'disabled_notice'          => '',
+            'discussion_model'         => $discussionmodel,
+            'discussion_model_label'   => $discussionmodellabel,
+            'discussion_models'        => $discussionmodels,
+            'aggregate_html'           => $aggregatehtml,
+            'has_aggregate'            => !empty($forumanalysis),
+            'stale_notice'             => $stalefound,
+            'last_updated'             => $lastmod ? userdate($lastmod) : '',
+            'analysis_pending'         => $pendingfound,
+            'students'                 => $students,
+            'can_trigger'              => $cantrigger,
+            'can_configure'            => $canconfigure,
+            'can_view_peers'           => $canviewpeers,
+            'owndata_notice'           => $owndatanotice,
+            'trigger_url'              => $triggerurl,
+            'config_url'               => $configurl,
+            // Competency keys (v0.6.0).
+            'competency_site_ok'       => $competencydata['competency_site_ok'],
+            'competency_enabled'       => $competencydata['competency_enabled'],
+            'has_competencies'         => $competencydata['has_competencies'],
+            'competency_mode'          => $competencydata['competency_mode'],
+            'competency_mode_inherit'  => $competencydata['competency_mode_inherit'],
+            'competency_mode_exclude'  => $competencydata['competency_mode_exclude'],
+            'competency_mode_specific' => $competencydata['competency_mode_specific'],
+            'competency_ids_json'      => $competencydata['competency_ids_json'],
+            'course_competencies'      => $competencydata['course_competencies'],
         ];
     }
 
     // -------------------------------------------------------------------------
     // Private helpers
     // -------------------------------------------------------------------------
+
+    /**
+     * Resolve all competency-related context variables for the template.
+     *
+     * Implements the three-level resolution chain:
+     *   Site level  → core_competency subsystem enabled?
+     *   Course level → competencies_enabled in local_lid_settings (with site default fallback)
+     *   Forum level  → competency_ids in local_lid_forum_config (three-state semantics)
+     *
+     * The course competency list is only fetched when both the subsystem is on
+     * AND course-level competencies are enabled — avoiding wasted API calls and
+     * potential fatals when the subsystem is off.
+     *
+     * Three-state competency_ids semantics:
+     *   null / missing → 'inherit'  (use all course competencies)
+     *   '[]'           → 'exclude'  (explicitly disable for this forum)
+     *   '[3,7,12]'     → 'specific' (evaluate only these IDs)
+     *
+     * @param  int             $courseid  Course ID.
+     * @param  \stdClass|false $config    local_lid_forum_config record (or false).
+     * @return array  Flat array of all competency template variables.
+     */
+    private function resolve_competency_context(int $courseid, $config): array {
+        // Safe defaults — returned as-is if any early condition fails.
+        $defaults = [
+            'competency_site_ok'       => false,
+            'competency_enabled'       => false,
+            'has_competencies'         => false,
+            'competency_mode'          => 'inherit',
+            'competency_mode_inherit'  => true,
+            'competency_mode_exclude'  => false,
+            'competency_mode_specific' => false,
+            'competency_ids_json'      => '[]',
+            'course_competencies'      => [],
+        ];
+
+        // Step 1: Check Moodle competency subsystem.
+        $siteok = false;
+        try {
+            $siteok = \core_competency\api::is_enabled();
+        } catch (\Exception $e) {
+            // Subsystem unavailable — return all defaults.
+            return $defaults;
+        }
+
+        if (!$siteok) {
+            return $defaults;
+        }
+
+        // Step 2: Resolve course-level toggle with site-default fallback.
+        global $DB;
+        $sitecoursedefault = (bool) get_config('local_lid', 'competencies_enabled_default');
+        $coursesetting     = $DB->get_record('local_lid_settings', ['courseid' => $courseid]);
+        if ($coursesetting !== false && isset($coursesetting->competencies_enabled)) {
+            $courseenabled = (bool) $coursesetting->competencies_enabled;
+        } else {
+            $courseenabled = $sitecoursedefault;
+        }
+
+        // Step 3: Resolve forum-level competency_ids (three-state).
+        $rawids = ($config !== false && isset($config->competency_ids))
+            ? $config->competency_ids
+            : null;
+
+        [$mode, $selectedids, $idsjson] = $this->resolve_competency_mode($rawids);
+
+        // Step 4: Fetch course competencies only when needed.
+        // Avoids an API call when the course toggle is off.
+        $coursecompetencies = [];
+        $hascompetencies    = false;
+
+        if ($courseenabled) {
+            try {
+                $linked = \core_competency\api::list_course_competencies($courseid);
+                if (!empty($linked)) {
+                    $hascompetencies = true;
+                    foreach ($linked as $lc) {
+                        $comp = $lc->get_competency();
+                        $id   = (int) $comp->get('id');
+
+                        // Mark as selected when mode is 'specific' and ID is in the list.
+                        $isselected = ($mode === 'specific') && in_array($id, $selectedids, true);
+
+                        $coursecompetencies[] = [
+                            'id'          => $id,
+                            'shortname'   => $comp->get('shortname'),
+                            'description' => format_text($comp->get('description'), FORMAT_HTML),
+                            'selected'    => $isselected,
+                        ];
+                    }
+                }
+            } catch (\Exception $e) {
+                // Competency API unavailable or permission error — degrade gracefully.
+                $hascompetencies    = false;
+                $coursecompetencies = [];
+            }
+        }
+
+        return [
+            'competency_site_ok'       => true,
+            'competency_enabled'       => $courseenabled,
+            'has_competencies'         => $hascompetencies,
+            'competency_mode'          => $mode,
+            'competency_mode_inherit'  => ($mode === 'inherit'),
+            'competency_mode_exclude'  => ($mode === 'exclude'),
+            'competency_mode_specific' => ($mode === 'specific'),
+            'competency_ids_json'      => $idsjson,
+            'course_competencies'      => $coursecompetencies,
+        ];
+    }
+
+    /**
+     * Decode the raw competency_ids column value into mode, IDs, and JSON string.
+     *
+     * Three-state semantics:
+     *   null / not set → mode 'inherit',  ids [], json '[]'
+     *   '[]'           → mode 'exclude',  ids [], json '[]'
+     *   '[3,7,12]'     → mode 'specific', ids [3,7,12], json '[3,7,12]'
+     *
+     * An unparseable value is treated as 'inherit' to fail safe.
+     *
+     * @param  string|null $rawids  Raw value from local_lid_forum_config.competency_ids.
+     * @return array  [string $mode, int[] $ids, string $json]
+     */
+    private function resolve_competency_mode(?string $rawids): array {
+        // null → inherit.
+        if ($rawids === null) {
+            return ['inherit', [], '[]'];
+        }
+
+        $decoded = json_decode($rawids, true);
+
+        // Unparseable → fail safe to inherit.
+        if (!is_array($decoded)) {
+            return ['inherit', [], '[]'];
+        }
+
+        // Empty array → exclude.
+        if (count($decoded) === 0) {
+            return ['exclude', [], '[]'];
+        }
+
+        // Non-empty array → specific.
+        $ids  = array_map('intval', $decoded);
+        $json = json_encode($ids);
+        return ['specific', $ids, $json];
+    }
 
     /**
      * Build the discussion_models array for forum_config.mustache.
