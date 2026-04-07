@@ -31,6 +31,14 @@ defined('MOODLE_INTERNAL') || die();
  *
  * Each execution performs three phases in order:
  *
+ * PHASE 0 — Orphaned claim recovery
+ *   Before doing any work, releases queue items that were claimed more than
+ *   10 minutes ago but never completed. This self-heals runs that were
+ *   interrupted by LLM timeouts, 503 errors, or PHP process termination.
+ *   The release_claimed() helper only releases rows from the *current* run,
+ *   so without this step, rows claimed by a crashed prior run are permanently
+ *   stuck with timeclaimed IS NOT NULL and never re-enter the candidate pool.
+ *
  * PHASE 1 — Close detection (cron-driven triggers)
  *   Scans LID-enabled forums for two automatic close conditions that do not
  *   produce Moodle events:
@@ -73,6 +81,16 @@ class process_queue extends \core\task\scheduled_task {
     const MAX_ATTEMPTS = 3;
 
     /**
+     * Number of seconds after which a claimed-but-unfinished queue item is
+     * considered orphaned and released back to the candidate pool.
+     *
+     * Set to 10 minutes — well above the maximum expected LLM call duration
+     * (~60 seconds for a full student_forum prompt) but short enough to
+     * recover within a few cron cycles after a crash or 503.
+     */
+    const CLAIM_STALE_SECONDS = 600;
+
+    /**
      * Return the human-readable task name shown in the scheduled tasks UI.
      *
      * @return string
@@ -88,6 +106,30 @@ class process_queue extends \core\task\scheduled_task {
         global $DB;
 
         $now = time();
+
+        // ----------------------------------------------------------------
+        // PHASE 0 — Orphaned claim recovery.
+        //
+        // release_claimed() only clears rows claimed at the exact timestamp
+        // of the current run. Rows orphaned by a previous crashed or
+        // timed-out run (e.g. a 503 from the LLM provider) are never
+        // released by that helper and become permanently stuck.
+        //
+        // This step runs unconditionally at the start of every execution
+        // to self-heal those orphaned rows before the candidate query runs.
+        // ----------------------------------------------------------------
+        $stale_threshold = $now - self::CLAIM_STALE_SECONDS;
+        $stale_released  = $DB->execute(
+            "UPDATE {local_lid_queue}
+                SET timeclaimed = NULL
+              WHERE timeclaimed IS NOT NULL
+                AND timeclaimed < :stale",
+            ['stale' => $stale_threshold]
+        );
+        if ($stale_released) {
+            mtrace('local_lid process_queue: released orphaned claimed items older than ' .
+                self::CLAIM_STALE_SECONDS . ' seconds.');
+        }
 
         // ----------------------------------------------------------------
         // PHASE 1 — Cron-driven close detection.
@@ -650,6 +692,12 @@ class process_queue extends \core\task\scheduled_task {
 
     /**
      * Release claimed queue items back to the pool by clearing timeclaimed.
+     *
+     * Note: this helper only releases rows claimed at the exact timestamp
+     * passed in ($claimedtime). It is used to release items claimed by the
+     * *current* run when processing is aborted mid-batch. Rows orphaned by
+     * previous crashed runs are handled by the Phase 0 stale-claim cleanup
+     * at the top of execute().
      *
      * @param int[] $ids
      * @param int   $claimedtime
