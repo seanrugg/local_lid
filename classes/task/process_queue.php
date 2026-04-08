@@ -57,11 +57,27 @@ defined('MOODLE_INTERNAL') || die();
  *   was written — aggregation errors are caught separately and do not cause
  *   a success to be reported as failure.
  *
+ *   Each LLM prompt includes a structured assessment metadata block containing
+ *   userid, forumid, analysisid, scope, and a UTC timestamp. This metadata
+ *   is embedded in the prompt payload and appears in external API provider
+ *   logs (e.g. Google AI Studio), enabling full audit correlation between
+ *   Moodle records and external call logs without relying on token fingerprinting.
+ *
  * PHASE 3 — Aggregation + notification
  *   After the batch completes, triggers forum and course aggregate recomputation
  *   for any forum that had at least one successful analysis this run.
  *   Sends completion notifications to instructors for those forums if the
  *   forum's full analysis set is now complete (no remaining pending rows).
+ *   Notification failures (including invalid email addresses) are caught and
+ *   logged as warnings — they never cause a completed analysis job to be
+ *   re-queued or counted as failed.
+ *
+ * Audit trail:
+ *   A row is written to local_lid_call_log for every processed queue item
+ *   immediately after the LLM call completes and before the queue item is
+ *   deleted. This provides a permanent, append-only record that can be used
+ *   to correlate Moodle assessment records with external API provider logs
+ *   using the timeclaimed / timeprocessed window and userid as anchors.
  *
  * Concurrency safety:
  *   Queue items are claimed by setting timeclaimed = NOW() in a single UPDATE
@@ -224,9 +240,14 @@ class process_queue extends \core\task\scheduled_task {
             ]);
 
             $json_written = false;
+            $timeprocessed = null;
 
             try {
-                $json_written = $this->process_analysis_row($analyser, $analysisrow);
+                [$json_written, $timeprocessed] = $this->process_analysis_row(
+                    $analyser,
+                    $analysisrow,
+                    (int) $item->timeclaimed
+                );
             } catch (\local_lid\exception\llm_config_exception $e) {
                 // Config broken mid-run — release remaining and abort.
                 $remaining = array_filter($claimed, fn($c) => $c->id !== $item->id);
@@ -249,6 +270,15 @@ class process_queue extends \core\task\scheduled_task {
             if ($json_written) {
                 // SUCCESS — determined by JSON write, not by whether aggregation succeeded.
                 $succeeded++;
+
+                // Write audit log row before deleting the queue item.
+                $this->write_call_log(
+                    $analysisrow,
+                    (int) $item->timeclaimed,
+                    $timeprocessed ?? time(),
+                    true
+                );
+
                 $this->delete_queue_item($item->id);
                 $forums_updated[$analysisrow->forumid] = $analysisrow->courseid;
 
@@ -263,6 +293,14 @@ class process_queue extends \core\task\scheduled_task {
                     );
                 }
             } else {
+                // Write audit log row for failed call before marking error.
+                $this->write_call_log(
+                    $analysisrow,
+                    (int) $item->timeclaimed,
+                    $timeprocessed ?? time(),
+                    false
+                );
+
                 $failed++;
                 $this->mark_analysis_error($analysisrow->id, 'LLM returned empty or invalid JSON.');
 
@@ -435,18 +473,24 @@ class process_queue extends \core\task\scheduled_task {
     /**
      * Process a single analysis row by building the prompt and calling the LLM.
      *
-     * Handles student_forum and thread scope. Validates the returned JSON,
-     * strips any markdown fences via the validator, and writes clean
-     * re-encoded JSON to local_lid_analysis on success.
+     * Handles student_forum and thread scope. Injects a structured assessment
+     * metadata block into the prompt before sending, embedding userid, forumid,
+     * analysisid, scope, and a UTC timestamp. This metadata appears in external
+     * API provider logs and enables audit correlation without token fingerprinting.
+     *
+     * Validates the returned JSON, strips any markdown fences via the validator,
+     * and writes clean re-encoded JSON to local_lid_analysis on success.
      *
      * @param  \local_lid\analysis\session_analyser $analyser
      * @param  \stdClass                            $analysisrow
-     * @return bool True if analysis_json was successfully written.
+     * @param  int                                  $timeclaimed  Queue claim timestamp for audit log.
+     * @return array{bool, int}  [json_written, timeprocessed]
      */
     private function process_analysis_row(
         \local_lid\analysis\session_analyser $analyser,
-        \stdClass $analysisrow
-    ): bool {
+        \stdClass $analysisrow,
+        int $timeclaimed
+    ): array {
         global $DB;
 
         $builder = new \local_lid\llm\prompt_builder(
@@ -467,7 +511,7 @@ class process_queue extends \core\task\scheduled_task {
             );
             if (!$discussion) {
                 mtrace("local_lid process_queue: discussion {$analysisrow->discussionid} not found — skipping.");
-                return false;
+                return [false, time()];
             }
             $prompt     = $builder->build_for_thread_by_id(
                 (int) $analysisrow->discussionid,
@@ -476,19 +520,51 @@ class process_queue extends \core\task\scheduled_task {
             $promptHash = $builder->get_forum_analyzer_hash();
         } else {
             mtrace("local_lid process_queue: unsupported scope '{$analysisrow->scope}' — skipping.");
-            return false;
+            return [false, time()];
         }
 
         if (empty($prompt)) {
             mtrace("local_lid process_queue: empty prompt for analysis row {$analysisrow->id} — no posts found.");
-            return false;
+            return [false, time()];
         }
+
+        // ----------------------------------------------------------------
+        // Inject structured assessment metadata block.
+        //
+        // This block is prepended to the prompt and appears verbatim in
+        // the API provider's input log, enabling direct correlation of
+        // external call records back to specific Moodle users and analysis
+        // rows without relying on post content fingerprinting.
+        //
+        // userid is null for thread-scope calls — the block records 'null'
+        // explicitly so the absence is visible in the API log rather than
+        // silently absent.
+        // ----------------------------------------------------------------
+        $useridlabel = ($analysisrow->scope === 'student_forum' && !empty($analysisrow->userid))
+            ? (int) $analysisrow->userid
+            : 'null';
+
+        $metadatablock = implode("\n", [
+            '## LID Assessment Metadata',
+            '<!-- This block is used for audit trail correlation only. -->',
+            '- lid_analysisid: ' . (int) $analysisrow->id,
+            '- lid_userid: '     . $useridlabel,
+            '- lid_forumid: '    . (int) $analysisrow->forumid,
+            '- lid_courseid: '   . (int) $analysisrow->courseid,
+            '- lid_scope: '      . $analysisrow->scope,
+            '- lid_timestamp: '  . gmdate('Y-m-d\TH:i:s\Z', $timeclaimed),
+            '',
+        ]);
+
+        $prompt = $metadatablock . $prompt;
 
         // Call the LLM.
         $rawjson = $analyser->call_llm($prompt);
 
+        $timeprocessed = time();
+
         if (empty($rawjson)) {
-            return false;
+            return [false, $timeprocessed];
         }
 
         // Validate the returned JSON.
@@ -496,7 +572,7 @@ class process_queue extends \core\task\scheduled_task {
         // or null if validation fails. We re-encode to store clean JSON.
         $data = $analyser->validate_json($rawjson);
         if ($data === null) {
-            return false;
+            return [false, $timeprocessed];
         }
 
         $schemaversion = $data['schema_version'] ?? '1.2';
@@ -507,7 +583,7 @@ class process_queue extends \core\task\scheduled_task {
 
         if ($cleanjson === false) {
             mtrace("local_lid process_queue: JSON re-encode failed for analysis row {$analysisrow->id}.");
-            return false;
+            return [false, $timeprocessed];
         }
 
         // Write to the analysis row.
@@ -522,7 +598,7 @@ class process_queue extends \core\task\scheduled_task {
             'timemodified'   => time(),
         ]);
 
-        return true;
+        return [true, $timeprocessed];
     }
 
     // -------------------------------------------------------------------------
@@ -544,6 +620,17 @@ class process_queue extends \core\task\scheduled_task {
     /**
      * Send a completion notification to instructors if the forum's full
      * analysis set is now complete.
+     *
+     * Notification is a courtesy — it must never cause a completed analysis
+     * job to be re-queued or counted as failed. All notification failures,
+     * including invalid email addresses, missing user properties, and
+     * message delivery errors, are caught and logged as warnings only.
+     *
+     * Each instructor's user record is fetched in full via core_user::get_user()
+     * to satisfy Moodle's messaging system requirement for a complete userto
+     * object. A pre-flight email validation guard skips delivery for users
+     * with absent or malformed email addresses rather than attempting delivery
+     * and relying on the mail layer to throw.
      *
      * Skips silently if the local_lid message provider is not registered
      * in Moodle's messaging system to avoid debug noise during development.
@@ -593,7 +680,7 @@ class process_queue extends \core\task\scheduled_task {
         $instructors = get_users_by_capability(
             $context,
             'local/lid:viewforumdashboard',
-            'u.id, u.firstname, u.lastname, u.email, u.mailformat'
+            'u.id'
         );
 
         if (empty($instructors)) {
@@ -608,54 +695,130 @@ class process_queue extends \core\task\scheduled_task {
         ]);
 
         foreach ($instructors as $instructor) {
-            $message                    = new \core\message\message();
-            $message->component         = 'local_lid';
-            $message->name              = 'analysis_complete';
-            $message->userfrom          = \core_user::get_noreply_user();
-            $message->userto            = $instructor;
-            $message->subject           = get_string(
-                'notification_complete_subject',
-                'local_lid',
-                ['forum' => $forum->name, 'course' => $course->shortname]
-            );
-            $message->fullmessage       = get_string(
-                'notification_complete_body',
-                'local_lid',
-                [
-                    'forum'  => $forum->name,
-                    'course' => $course->fullname,
-                    'count'  => $complete,
-                    'url'    => $dashurl->out(false),
-                ]
-            );
-            $message->fullmessageformat = FORMAT_PLAIN;
-            $message->fullmessagehtml   = get_string(
-                'notification_complete_body_html',
-                'local_lid',
-                [
-                    'forum'  => format_string($forum->name),
-                    'course' => format_string($course->fullname),
-                    'count'  => $complete,
-                    'url'    => $dashurl->out(false),
-                ]
-            );
-            $message->smallmessage      = get_string(
-                'notification_complete_small',
-                'local_lid',
-                ['forum' => $forum->name, 'count' => $complete]
-            );
-            $message->notification      = 1;
-            $message->contexturl        = $dashurl->out(false);
-            $message->contexturlname    = get_string('notification_complete_urlname', 'local_lid');
-
             try {
+                // Fetch the full user record. get_users_by_capability() returns
+                // a minimal object that is missing fields required by message_send()
+                // (mailformat, maildisplay, etc.). Fetching the full record here
+                // prevents the "Necessary properties missing in userto object" debug
+                // notice that would otherwise bubble up and poison the job status.
+                $fulluser = \core_user::get_user($instructor->id);
+                if (!$fulluser) {
+                    mtrace("local_lid process_queue: notification skipped for user {$instructor->id} — user record not found.");
+                    continue;
+                }
+
+                // Pre-flight email validation guard.
+                // Validate before attempting delivery so that invalid addresses
+                // (malformed domains, empty fields, legacy SIS data) are handled
+                // explicitly rather than relying on the mail layer to throw.
+                // This is a production concern: invalid emails occur in real
+                // environments fed by HR systems, SIS integrations, and manual
+                // imports — not only in development with dummy data.
+                if (empty($fulluser->email) || !validate_email($fulluser->email)) {
+                    mtrace("local_lid process_queue: notification skipped for user {$fulluser->id} — invalid or missing email address.");
+                    continue;
+                }
+
+                $message                    = new \core\message\message();
+                $message->component         = 'local_lid';
+                $message->name              = 'analysis_complete';
+                $message->userfrom          = \core_user::get_noreply_user();
+                $message->userto            = $fulluser;
+                $message->subject           = get_string(
+                    'notification_complete_subject',
+                    'local_lid',
+                    ['forum' => $forum->name, 'course' => $course->shortname]
+                );
+                $message->fullmessage       = get_string(
+                    'notification_complete_body',
+                    'local_lid',
+                    [
+                        'forum'  => $forum->name,
+                        'course' => $course->fullname,
+                        'count'  => $complete,
+                        'url'    => $dashurl->out(false),
+                    ]
+                );
+                $message->fullmessageformat = FORMAT_PLAIN;
+                $message->fullmessagehtml   = get_string(
+                    'notification_complete_body_html',
+                    'local_lid',
+                    [
+                        'forum'  => format_string($forum->name),
+                        'course' => format_string($course->fullname),
+                        'count'  => $complete,
+                        'url'    => $dashurl->out(false),
+                    ]
+                );
+                $message->smallmessage      = get_string(
+                    'notification_complete_small',
+                    'local_lid',
+                    ['forum' => $forum->name, 'count' => $complete]
+                );
+                $message->notification      = 1;
+                $message->contexturl        = $dashurl->out(false);
+                $message->contexturlname    = get_string('notification_complete_urlname', 'local_lid');
+
                 message_send($message);
+
             } catch (\Throwable $e) {
+                // Notification failure must never propagate. Log as warning only.
+                // The analysis is complete and available regardless of whether
+                // the notification was delivered successfully.
                 mtrace(
-                    "local_lid process_queue: notification failed for user {$instructor->id}: " .
+                    "local_lid process_queue: notification warning for user {$instructor->id}: " .
                     $e->getMessage()
                 );
             }
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Audit log
+    // -------------------------------------------------------------------------
+
+    /**
+     * Write an audit log row to local_lid_call_log.
+     *
+     * Called immediately after a queue item is processed (success or failure)
+     * and before the queue item is deleted. Provides a permanent, append-only
+     * record that can be correlated with external API provider logs using the
+     * timeclaimed / timeprocessed window and userid as anchors.
+     *
+     * Failures are caught and logged as warnings — a call log write failure
+     * must never cause a successfully-processed analysis to be re-queued.
+     *
+     * @param \stdClass $analysisrow   The analysis row that was processed.
+     * @param int       $timeclaimed   When the queue item was claimed.
+     * @param int       $timeprocessed When the LLM call completed.
+     * @param bool      $succeeded     Whether analysis_json was written.
+     */
+    private function write_call_log(
+        \stdClass $analysisrow,
+        int $timeclaimed,
+        int $timeprocessed,
+        bool $succeeded
+    ): void {
+        global $DB;
+
+        try {
+            $DB->insert_record('local_lid_call_log', (object) [
+                'analysisid'    => (int) $analysisrow->id,
+                'userid'        => !empty($analysisrow->userid) ? (int) $analysisrow->userid : null,
+                'forumid'       => (int) $analysisrow->forumid,
+                'courseid'      => (int) $analysisrow->courseid,
+                'scope'         => $analysisrow->scope,
+                'llm_model'     => $analysisrow->llm_model ?? null,
+                'prompt_hash'   => $analysisrow->prompt_hash ?? null,
+                'timeclaimed'   => $timeclaimed,
+                'timeprocessed' => $timeprocessed,
+                'succeeded'     => $succeeded ? 1 : 0,
+            ]);
+        } catch (\Throwable $e) {
+            mtrace(
+                "local_lid process_queue: call log write failed for analysis row {$analysisrow->id}: " .
+                $e->getMessage()
+            );
         }
     }
 
