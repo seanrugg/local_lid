@@ -13,7 +13,6 @@
 //
 // You should have received a copy of the GNU General Public License
 // along with Moodle.  If not, see <https://www.gnu.org/licenses/>.
-
 /**
  * Plugin version and compatibility information.
  *
@@ -21,15 +20,12 @@
  * @copyright  2026 Learning Intelligence Dashboard Project Contributors
  * @license    https://www.gnu.org/licenses/gpl-3.0.html GNU GPL v3 or later
  */
-
 defined('MOODLE_INTERNAL') || die();
-
 $plugin->component = 'local_lid';        // Full component name: type_name.
-$plugin->version   = 2026032801;         // YYYYMMDDNN — increment NN for same-day releases.
+$plugin->version   = 2026040800;         // YYYYMMDDNN — increment NN for same-day releases.
 $plugin->requires  = 2024042200;         // Minimum Moodle version: 4.5 LTS (2024042200).
 $plugin->maturity  = MATURITY_BETA;      // MATURITY_ALPHA | MATURITY_BETA | MATURITY_RC | MATURITY_STABLE.
-$plugin->release   = '0.6.0';            // Human-readable version string.
-
+$plugin->release   = '0.7.0';            // Human-readable version string.
 // No dependencies on other plugins at this stage.
 // When Moodle forum dependency is formalised, add:
 // $plugin->dependencies = ['mod_forum' => ANY_VERSION];
