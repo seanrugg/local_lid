@@ -46,6 +46,18 @@
  *                []=exclude all, [3,7]=specific).
  *                Adds site-level default via config_plugins
  *                (competencies_enabled_default).
+ *   2026040800 — v0.7.0 — API Call Audit Log + Notification hardening.
+ *                Adds local_lid_call_log table: append-only audit record of
+ *                every LLM API call made by the scheduled task. Captures
+ *                userid, forumid, courseid, scope, llm_model, prompt_hash,
+ *                timeclaimed, timeprocessed, and succeeded flag. Enables
+ *                full traceability from Moodle assessment records back to
+ *                external API provider logs (e.g. Google AI Studio).
+ *                process_queue.php updated to: embed assessment metadata
+ *                block in LLM prompt (userid, forumid, analysisid,
+ *                timestamp) for API-side audit correlation; write call log
+ *                row on completion; fix notification failure propagation
+ *                (email errors no longer cause completed jobs to re-queue).
  *
  * When adding a new upgrade step:
  *   1. Increment $plugin->version in version.php (e.g. 2026032801).
@@ -225,6 +237,65 @@ function xmldb_local_lid_upgrade(int $oldversion): bool {
         }
 
         upgrade_plugin_savepoint(true, 2026032801, 'local', 'lid');
+    }
+
+    // --------------------------------------------------------------------
+    // v0.7.0 — API Call Audit Log + Notification hardening
+    //
+    // Creates local_lid_call_log: an append-only audit table that records
+    // every LLM API call made by the scheduled task. One row is written
+    // per processed queue item immediately after the call completes and
+    // before the queue item is deleted.
+    //
+    // Fields captured:
+    //   analysisid    — links to the analysis row updated by this call
+    //   userid        — assessed learner (null for thread-scope calls)
+    //   forumid       — forum context
+    //   courseid      — course context
+    //   scope         — student_forum | thread
+    //   llm_model     — model used as reported by the API response
+    //   prompt_hash   — SHA-256 of the prompt sent; preserves prompt
+    //                   version at call time even if analysis row is
+    //                   later overwritten by a re-assessment
+    //   timeclaimed   — when the queue item was claimed (lower bound of
+    //                   the API call window for external log correlation)
+    //   timeprocessed — when JSON was written (upper bound)
+    //   succeeded     — 1 if analysis_json was written; 0 if LLM
+    //                   returned empty or invalid JSON
+    //
+    // This table is not automatically pruned. Retention policy to be
+    // determined by site administrators.
+    // --------------------------------------------------------------------
+    if ($oldversion < 2026040800) {
+
+        $callogtable = new xmldb_table('local_lid_call_log');
+
+        // Only create if it doesn't already exist (safe re-run).
+        if (!$dbman->table_exists($callogtable)) {
+
+            $callogtable->add_field('id', XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, XMLDB_SEQUENCE);
+            $callogtable->add_field('analysisid', XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, null, null);
+            $callogtable->add_field('userid', XMLDB_TYPE_INTEGER, '10', null, null, null, null);
+            $callogtable->add_field('forumid', XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, null, null);
+            $callogtable->add_field('courseid', XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, null, null);
+            $callogtable->add_field('scope', XMLDB_TYPE_CHAR, '20', null, XMLDB_NOTNULL, null, null);
+            $callogtable->add_field('llm_model', XMLDB_TYPE_CHAR, '128', null, null, null, null);
+            $callogtable->add_field('prompt_hash', XMLDB_TYPE_CHAR, '64', null, null, null, null);
+            $callogtable->add_field('timeclaimed', XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, null, null);
+            $callogtable->add_field('timeprocessed', XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, null, null);
+            $callogtable->add_field('succeeded', XMLDB_TYPE_INTEGER, '1', null, XMLDB_NOTNULL, null, '0');
+
+            $callogtable->add_key('primary', XMLDB_KEY_PRIMARY, ['id']);
+            $callogtable->add_key('fk_analysisid', XMLDB_KEY_FOREIGN, ['analysisid'], 'local_lid_analysis', ['id']);
+
+            $callogtable->add_index('userid_forumid', XMLDB_INDEX_NOTUNIQUE, ['userid', 'forumid']);
+            $callogtable->add_index('forumid_timeclaimed', XMLDB_INDEX_NOTUNIQUE, ['forumid', 'timeclaimed']);
+            $callogtable->add_index('analysisid', XMLDB_INDEX_NOTUNIQUE, ['analysisid']);
+
+            $dbman->create_table($callogtable);
+        }
+
+        upgrade_plugin_savepoint(true, 2026040800, 'local', 'lid');
     }
 
     return true;
