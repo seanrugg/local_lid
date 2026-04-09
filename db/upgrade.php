@@ -263,6 +263,9 @@ function xmldb_local_lid_upgrade(int $oldversion): bool {
     //   succeeded     — 1 if analysis_json was written; 0 if LLM
     //                   returned empty or invalid JSON
     //
+    // Note: the fk_analysisid foreign key automatically generates a
+    // backing index on analysisid — no explicit analysisid index is added.
+    //
     // This table is not automatically pruned. Retention policy to be
     // determined by site administrators.
     // --------------------------------------------------------------------
@@ -290,7 +293,6 @@ function xmldb_local_lid_upgrade(int $oldversion): bool {
 
             $callogtable->add_index('userid_forumid', XMLDB_INDEX_NOTUNIQUE, ['userid', 'forumid']);
             $callogtable->add_index('forumid_timeclaimed', XMLDB_INDEX_NOTUNIQUE, ['forumid', 'timeclaimed']);
-            $callogtable->add_index('analysisid', XMLDB_INDEX_NOTUNIQUE, ['analysisid']);
 
             $dbman->create_table($callogtable);
         }
