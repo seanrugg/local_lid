@@ -312,6 +312,9 @@
 
     The timeclaimed + timeprocessed window combined with userid provides
     a two-factor anchor for matching against external API provider logs.
+
+    Note: the fk_analysisid foreign key automatically generates a backing
+    index on analysisid — no explicit analysisid index is defined here.
     =========================================================================
     -->
     <TABLE NAME="local_lid_call_log" COMMENT="Append-only audit log of LLM API calls made by the scheduled task">
@@ -349,8 +352,6 @@
                COMMENT="Audit lookup: all calls for a specific student in a specific forum"/>
         <INDEX NAME="forumid_timeclaimed" UNIQUE="false" FIELDS="forumid, timeclaimed"
                COMMENT="Time-window lookup: correlate Moodle records with external API provider logs"/>
-        <INDEX NAME="analysisid" UNIQUE="false" FIELDS="analysisid"
-               COMMENT="Fast lookup of all call log entries for a given analysis row"/>
       </INDEXES>
     </TABLE>
 
