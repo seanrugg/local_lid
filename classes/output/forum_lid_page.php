@@ -434,6 +434,11 @@ class forum_lid_page implements \renderable, \templatable {
      *   '[]'           → 'exclude'  (explicitly disable for this forum)
      *   '[3,7,12]'     → 'specific' (evaluate only these IDs)
      *
+     * list_course_competencies() returns an array of associative arrays:
+     *   ['competency' => \core_competency\competency, 'coursecompetency' => ...]
+     * Each element is accessed as $pair['competency'], NOT via ->get_competency().
+     * This matches the pattern used in prompt_builder::fetch_course_competencies().
+     *
      * @param  int             $courseid  Course ID.
      * @param  \stdClass|false $config    local_lid_forum_config record (or false).
      * @return array  Flat array of all competency template variables.
@@ -492,8 +497,15 @@ class forum_lid_page implements \renderable, \templatable {
                 $linked = \core_competency\api::list_course_competencies($courseid);
                 if (!empty($linked)) {
                     $hascompetencies = true;
-                    foreach ($linked as $lc) {
-                        $comp = $lc->get_competency();
+                    foreach ($linked as $pair) {
+                        // list_course_competencies() returns associative arrays:
+                        // ['competency' => competency object, 'coursecompetency' => ...]
+                        // Guard against unexpected return shapes.
+                        if (!isset($pair['competency'])
+                                || !($pair['competency'] instanceof \core_competency\competency)) {
+                            continue;
+                        }
+                        $comp = $pair['competency'];
                         $id   = (int) $comp->get('id');
 
                         // Mark as selected when mode is 'specific' and ID is in the list.
