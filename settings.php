@@ -121,17 +121,20 @@ if ($hassiteconfig) {
         'local_lid/llm_model',
         new lang_string('settings_llm_model', 'local_lid'),
         new lang_string('settings_llm_model_desc', 'local_lid'),
-        'claude-sonnet-4-6',
+        'gemini-2.5-flash',
         PARAM_TEXT,
         40
     ));
 
     // Max tokens.
+    // Default: 16384 — recommended baseline for peer discussion forum analysis.
+    // Failed calls are automatically retried at double this value; ensure
+    // llm_maxtokens × 2 does not exceed the model's output token ceiling.
     $settings->add(new admin_setting_configtext(
         'local_lid/llm_maxtokens',
         new lang_string('settings_llm_maxtokens', 'local_lid'),
         new lang_string('settings_llm_maxtokens_desc', 'local_lid'),
-        '4096',
+        '16384',
         PARAM_INT,
         10
     ));
