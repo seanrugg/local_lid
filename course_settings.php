@@ -101,7 +101,11 @@ if ($action && confirm_sesskey()) {
 
     // Handle competency toggle POST.
     if ($action === 'save_competencies') {
-        $compenabled = required_param('competencies_enabled', PARAM_INT);
+        // The hidden fallback field (value="0") is rendered before the checkbox
+        // (value="1") in the form. When the checkbox is checked, PHP receives both
+        // values for the same field name and keeps the last one — the checkbox "1"
+        // correctly wins. When unchecked, only the hidden "0" is sent.
+        $compenabled = optional_param('competencies_enabled', 0, PARAM_INT);
         $compenabled = (int) (bool) $compenabled;
 
         $existing = $DB->get_record('local_lid_settings', ['courseid' => $courseid]);
@@ -209,8 +213,8 @@ if ($competencysubsystemenabled) {
 }
 
 // Current competencies_enabled state for this course.
-$coursesettings    = $DB->get_record('local_lid_settings', ['courseid' => $courseid]);
-$compenabled       = $coursesettings
+$coursesettings = $DB->get_record('local_lid_settings', ['courseid' => $courseid]);
+$compenabled    = $coursesettings
     ? (bool) $coursesettings->competencies_enabled
     : (bool) get_config('local_lid', 'competencies_enabled_default');
 
@@ -347,6 +351,7 @@ if (!$competencysubsystemenabled) {
     );
 
     // Competency toggle form.
+    // sesskey and action are passed in the URL; no need to duplicate as hidden fields.
     $toggleurl = new moodle_url($url, [
         'action'  => 'save_competencies',
         'sesskey' => sesskey(),
@@ -358,19 +363,17 @@ if (!$competencysubsystemenabled) {
         'style'  => 'display:flex;align-items:center;gap:12px;margin-bottom:16px',
     ]);
 
-    echo html_writer::empty_tag('input', [
-        'type'  => 'hidden',
-        'name'  => 'sesskey',
-        'value' => sesskey(),
-    ]);
-    echo html_writer::empty_tag('input', [
-        'type'  => 'hidden',
-        'name'  => 'action',
-        'value' => 'save_competencies',
-    ]);
-
     echo html_writer::start_tag('label', [
         'style' => 'display:flex;align-items:center;gap:8px;cursor:pointer',
+    ]);
+
+    // Hidden fallback MUST come before the checkbox. When the checkbox is checked,
+    // both fields are submitted under the same name; PHP keeps the last value, so
+    // the checkbox value="1" wins. When unchecked, only the hidden value="0" is sent.
+    echo html_writer::empty_tag('input', [
+        'type'  => 'hidden',
+        'name'  => 'competencies_enabled',
+        'value' => '0',
     ]);
 
     $checkedattr = $compenabled ? ['checked' => 'checked'] : [];
@@ -379,13 +382,6 @@ if (!$competencysubsystemenabled) {
         'name'  => 'competencies_enabled',
         'value' => '1',
     ], $checkedattr));
-
-    // Hidden field to ensure 0 is sent when checkbox unchecked.
-    echo html_writer::empty_tag('input', [
-        'type'  => 'hidden',
-        'name'  => 'competencies_enabled',
-        'value' => '0',
-    ]);
 
     echo get_string('competency_course_enabled', 'local_lid');
     echo html_writer::end_tag('label');
