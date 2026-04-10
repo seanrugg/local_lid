@@ -72,10 +72,10 @@ $string['settings_llm_apikey']           = 'API key';
 $string['settings_llm_apikey_desc']      = 'Your LLM provider API key. Stored encrypted in the Moodle database. Leave blank to keep the existing key.';
 
 $string['settings_llm_model']            = 'Model';
-$string['settings_llm_model_desc']       = 'The model identifier passed in API requests. Example: <code>claude-sonnet-4-6</code>';
+$string['settings_llm_model_desc']       = 'The model identifier passed in API requests. Example: <code>gemini-2.5-flash</code>';
 
 $string['settings_llm_maxtokens']        = 'Max tokens';
-$string['settings_llm_maxtokens_desc']   = 'Maximum tokens requested in each LLM API call. Default: 4096. Increase if analyses are being truncated.';
+$string['settings_llm_maxtokens_desc']   = 'Maximum output tokens requested per API call. This value affects the tokens used in a single API call to evaluate a single student. A lower value will result in more failed API calls; failed calls are automatically retried using double this value. Use models with a maximum output token ceiling of 65,000 or more. Token usage is influenced by the number of threads, posts, and students in the forum; post length; course competencies included in the prompt; and prompt length. Default: 16384.';
 
 $string['settings_llm_timeout']          = 'Request timeout (seconds)';
 $string['settings_llm_timeout_desc']     = 'HTTP timeout for LLM API requests in seconds. Default: 60. Increase for slow endpoints or large forum threads.';
