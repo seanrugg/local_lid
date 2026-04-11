@@ -31,6 +31,12 @@
  *   3. Prompt template
  *   4. Analysis triggers and cron schedule
  *
+ * The cron_interval setting uses set_updatedcallback('local_lid_after_config_change')
+ * to update the scheduled task expression in mdl_task_scheduled whenever the
+ * interval value is saved. The callback reads the submitted POST value directly
+ * to avoid the timing issue where get_config() returns the old value during
+ * the callback execution window.
+ *
  * @package    local_lid
  * @copyright  2026 Learning Intelligence Dashboard Project Contributors
  * @license    https://www.gnu.org/licenses/gpl-3.0.html GNU GPL v3 or later
@@ -221,15 +227,21 @@ if ($hassiteconfig) {
     ));
 
     // Cron interval — updates the scheduled task frequency when saved.
-    // The after_write callback is handled in lib.php local_lid_after_config_change().
-    $settings->add(new admin_setting_configtext(
+    // set_updatedcallback wires local_lid_after_config_change() to fire
+    // whenever this setting value changes. The callback reads the submitted
+    // POST value directly (key: s_local_lid_cron_interval) to avoid the
+    // timing issue where get_config() still returns the old value at
+    // callback execution time.
+    $cronintervalsetting = new admin_setting_configtext(
         'local_lid/cron_interval',
         new lang_string('settings_cron_interval', 'local_lid'),
         new lang_string('settings_cron_interval_desc', 'local_lid'),
         '5',
         PARAM_INT,
         6
-    ));
+    );
+    $cronintervalsetting->set_updatedcallback('local_lid_after_config_change');
+    $settings->add($cronintervalsetting);
 
     // Cron batch size.
     $settings->add(new admin_setting_configtext(
