@@ -35,8 +35,10 @@
  *     users with local/lid:viewstudentdashboard.
  *
  *   local_lid_after_config_change()
- *     Called when any local_lid setting is saved. Updates the scheduled task
- *     cron expression when cron_interval changes.
+ *     Called when the cron_interval admin setting is saved via set_updatedcallback.
+ *     Reads the submitted value directly from $_POST to avoid the timing issue
+ *     where get_config() still returns the old value at callback execution time.
+ *     Updates the scheduled task cron expression in mdl_task_scheduled.
  *
  *   local_lid_pluginfile()
  *     Required stub — this plugin does not serve files but Moodle expects
@@ -174,19 +176,39 @@ function local_lid_extend_navigation_user_settings(
 // =============================================================================
 
 /**
- * Called by Moodle after any local_lid plugin setting is saved via the
- * admin settings page.
+ * Called by Moodle when the cron_interval admin setting is saved.
  *
- * When cron_interval changes, recalculates the cron expression for the
- * \local_lid\task\process_queue scheduled task and writes it to the
- * task_scheduled table so the new interval takes effect without manual
- * admin intervention.
+ * Wired via set_updatedcallback() on the cron_interval admin_setting_configtext
+ * in settings.php. Moodle's set_updatedcallback fires BEFORE the new value is
+ * committed to config_plugins, so get_config() would return the old value.
+ *
+ * To avoid this timing issue, the new value is read directly from the raw POST
+ * data (key: 's_local_lid_cron_interval'), which holds the submitted value.
+ * Falls back to get_config() only when called outside an HTTP POST context
+ * (e.g. CLI, tests).
+ *
+ * Cron expression mapping:
+ *   interval = 1     → minute = '*'    (every minute)
+ *   interval = 5     → minute = '*/5'  (every 5 minutes)
+ *   interval = 60    → minute = '0'    (top of every hour)
+ *   interval = 1440  → minute = '0', hour = '0'  (once per day at midnight)
+ *   other            → minute = '*/N'  (every N minutes)
+ *
+ * Sets customised = 1 so Moodle does not reset the schedule on upgrade.
  */
 function local_lid_after_config_change(): void {
     global $DB;
 
-    $interval = (int) get_config('local_lid', 'cron_interval');
+    // Read the submitted value from POST if available (avoids get_config timing issue).
+    // The admin settings POST key format is: s_<pluginname>_<settingname>
+    if (isset($_POST['s_local_lid_cron_interval'])) {
+        $interval = (int) $_POST['s_local_lid_cron_interval'];
+    } else {
+        // Fallback for non-HTTP contexts (CLI, upgrade scripts, tests).
+        $interval = (int) get_config('local_lid', 'cron_interval');
+    }
 
+    // Clamp to valid range.
     if ($interval < 1) {
         $interval = 1;
     }
@@ -194,18 +216,20 @@ function local_lid_after_config_change(): void {
         $interval = 1440;
     }
 
-    // Build cron minute expression.
+    // Build cron expressions.
     if ($interval === 1) {
         $minute = '*';
+        $hour   = '*';
     } elseif ($interval === 60) {
         $minute = '0';
+        $hour   = '*';
     } elseif ($interval === 1440) {
         $minute = '0';
+        $hour   = '0';
     } else {
         $minute = '*/' . $interval;
+        $hour   = '*';
     }
-
-    $hour = ($interval === 1440) ? '0' : '*';
 
     $DB->set_field(
         'task_scheduled',
@@ -221,7 +245,7 @@ function local_lid_after_config_change(): void {
         ['classname' => '\local_lid\task\process_queue']
     );
 
-    // Mark the task as customised so Moodle does not reset it on upgrade.
+    // Mark as customised so Moodle does not reset the schedule on upgrade.
     $DB->set_field(
         'task_scheduled',
         'customised',
@@ -259,8 +283,8 @@ function local_lid_seed_default_prompt(): void {
     $record->courseid            = 0;
     $record->llm_endpoint        = '';
     $record->llm_apikey          = '';
-    $record->llm_model           = 'claude-sonnet-4-6';
-    $record->llm_maxtokens       = 4096;
+    $record->llm_model           = 'gemini-2.5-flash';
+    $record->llm_maxtokens       = 16384;
     $record->llm_timeout         = 60;
     $record->prompt_template     = $prompttext;
     $record->prompt_locked       = 0;
