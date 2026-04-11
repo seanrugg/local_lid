@@ -15,7 +15,7 @@
 // along with Moodle.  If not, see <https://www.gnu.org/licenses/>.
 
 /**
- * lib.php — core plugin callbacks for local_lid.
+ * lib.php - core plugin callbacks for local_lid.
  *
  * Functions in this file are called by Moodle's plugin framework directly.
  * They must follow the naming convention local_lid_<hookname>().
@@ -35,11 +35,13 @@
  *     users with local/lid:viewstudentdashboard.
  *
  *   local_lid_after_config_change()
- *     Called when any local_lid setting is saved. Updates the scheduled task
- *     cron expression when cron_interval changes.
+ *     Called when the cron_interval setting is saved via the admin settings
+ *     page. Updates the scheduled task cron expression in mdl_task_scheduled.
+ *     Reads the new value from $_POST directly because get_config() returns
+ *     the OLD value at callback execution time.
  *
  *   local_lid_pluginfile()
- *     Required stub — this plugin does not serve files but Moodle expects
+ *     Required stub - this plugin does not serve files but Moodle expects
  *     the function to exist.
  *
  * Install-time seeding:
@@ -47,6 +49,12 @@
  *   in db/upgrade.php on first install (version 2026032000) to write the
  *   default prompt from prompts/default-session-analyzer.md into
  *   local_lid_settings (courseid = 0).
+ *
+ * ASCII-only rule:
+ *   This file must contain only plain ASCII characters. PHP source files on
+ *   this server have been observed to fail parsing when UTF-8 characters
+ *   (em-dashes, arrows, smart quotes) appear in syntactically sensitive
+ *   positions. Verify with: grep -Pn '[^\x00-\x7F]' lib.php
  *
  * @package    local_lid
  * @copyright  2026 Learning Intelligence Dashboard Project Contributors
@@ -56,7 +64,7 @@
 defined('MOODLE_INTERNAL') || die();
 
 // =============================================================================
-// Navigation — Forum activity tab
+// Navigation - Forum activity tab
 // =============================================================================
 
 /**
@@ -116,7 +124,7 @@ function local_lid_extend_navigation_module(
 }
 
 // =============================================================================
-// Navigation — Student profile tab (course context)
+// Navigation - Student profile tab (course context)
 // =============================================================================
 
 /**
@@ -170,23 +178,52 @@ function local_lid_extend_navigation_user_settings(
 }
 
 // =============================================================================
-// Config change callback — update scheduled task cron expression
+// Config change callback - update scheduled task cron expression
 // =============================================================================
 
 /**
- * Called by Moodle after any local_lid plugin setting is saved via the
- * admin settings page.
+ * Called by Moodle after the local_lid cron_interval setting is saved via
+ * the admin settings page.
  *
- * When cron_interval changes, recalculates the cron expression for the
- * \local_lid\task\process_queue scheduled task and writes it to the
- * task_scheduled table so the new interval takes effect without manual
- * admin intervention.
+ * Wired in settings.php via:
+ *   $cronintervalsetting->set_updatedcallback('local_lid_after_config_change');
+ *
+ * Recalculates the cron expression for the \local_lid\task\process_queue
+ * scheduled task and writes it to the task_scheduled table so the new
+ * interval takes effect without manual admin intervention.
+ *
+ * Bug 2 fix (handoff 2026-04-11):
+ *   This callback used to read the new value via get_config('local_lid',
+ *   'cron_interval'). That call returned the OLD committed value because
+ *   the callback fires DURING the settings save, before the new value is
+ *   written to mdl_config_plugins. The result was that the task schedule
+ *   was always set from the previously stored interval, never the
+ *   just-submitted one.
+ *
+ *   The fix is to read the new value directly from the POST array using
+ *   the standard Moodle admin settings POST key convention:
+ *     s_<plugin>_<settingname>  ->  s_local_lid_cron_interval
+ *
+ *   If the POST key is not present (e.g. callback was triggered outside
+ *   the normal admin form save path) the function falls back to
+ *   get_config(), which is the previous behavior. This keeps the function
+ *   safe to call from any context without crashing, while preferring the
+ *   correct value when it is available.
  */
 function local_lid_after_config_change(): void {
     global $DB;
 
-    $interval = (int) get_config('local_lid', 'cron_interval');
+    // Bug 2 fix: read new value from POST directly.
+    // Fall back to get_config() if POST key is absent (defensive - the
+    // callback should only fire from the admin settings save path, but
+    // we do not want to crash if it is somehow invoked elsewhere).
+    if (isset($_POST['s_local_lid_cron_interval'])) {
+        $interval = (int) $_POST['s_local_lid_cron_interval'];
+    } else {
+        $interval = (int) get_config('local_lid', 'cron_interval');
+    }
 
+    // Clamp to valid range. Identical to the previous clamping logic.
     if ($interval < 1) {
         $interval = 1;
     }
@@ -197,9 +234,9 @@ function local_lid_after_config_change(): void {
     // Build cron minute expression.
     if ($interval === 1) {
         $minute = '*';
-    } elseif ($interval === 60) {
+    } else if ($interval === 60) {
         $minute = '0';
-    } elseif ($interval === 1440) {
+    } else if ($interval === 1440) {
         $minute = '0';
     } else {
         $minute = '*/' . $interval;
@@ -241,7 +278,7 @@ function local_lid_after_config_change(): void {
  * writes it to the site-level settings row (courseid = 0). Called once from
  * xmldb_local_lid_install() in db/install.php.
  *
- * Safe to call multiple times — checks for the existence of the site-level
+ * Safe to call multiple times - checks for the existence of the site-level
  * row before inserting.
  */
 function local_lid_seed_default_prompt(): void {
@@ -278,7 +315,7 @@ function local_lid_seed_default_prompt(): void {
 }
 
 // =============================================================================
-// Forum Edit Settings integration — inject LID toggle + discussion model
+// Forum Edit Settings integration - inject LID toggle + discussion model
 // =============================================================================
 
 /**
@@ -286,10 +323,10 @@ function local_lid_seed_default_prompt(): void {
  *
  * Adds a "Learning Intelligence Dashboard" section with:
  *   1. Enable/disable toggle (advcheckbox)
- *   2. Discussion model selector (select) — controls which Critical Discourse
+ *   2. Discussion model selector (select) - controls which Critical Discourse
  *      rubric variant the LLM applies when assessing forum discussions.
  *
- * Called by Moodle for every activity module — bails immediately for
+ * Called by Moodle for every activity module - bails immediately for
  * anything that isn't mod_forum.
  *
  * @param moodleform_mod  $formwrapper The mod_edit form wrapper.
@@ -308,7 +345,7 @@ function local_lid_coursemodule_standard_elements($formwrapper, $mform): void {
     $cmid     = $current->coursemodule ?? 0;
     $forumid  = $current->instance    ?? 0;
 
-    // Check capability — only users who can configure LID see this section.
+    // Check capability - only users who can configure LID see this section.
     $context = $cmid
         ? context_module::instance($cmid)
         : context_course::instance($courseid);
@@ -330,7 +367,7 @@ function local_lid_coursemodule_standard_elements($formwrapper, $mform): void {
         $currentmodel = $config->discussion_model
             ?? \local_lid\llm\prompt_builder::MODEL_OPEN_ENGAGEMENT;
     } else {
-        // New forum or no config row yet — use site defaults.
+        // New forum or no config row yet - use site defaults.
         $enabled = (bool) get_config('local_lid', 'lid_default_enabled');
     }
 
@@ -339,7 +376,7 @@ function local_lid_coursemodule_standard_elements($formwrapper, $mform): void {
         get_string('forum_lid_section', 'local_lid'));
 
     if ($forcedisabled) {
-        // Show a notice — no controls when force-disabled.
+        // Show a notice - no controls when force-disabled.
         $mform->addElement('static', 'local_lid_force_notice', '',
             html_writer::div(
                 get_string('forum_lid_force_disabled_notice', 'local_lid'),
@@ -361,7 +398,7 @@ function local_lid_coursemodule_standard_elements($formwrapper, $mform): void {
         $modeldescriptions = \local_lid\llm\prompt_builder::get_model_descriptions();
         $modeloptions      = [];
         foreach ($modeldescriptions as $value => $description) {
-            // Use the short label (first sentence before the em-dash).
+            // Use the short label from the language pack.
             $label = get_string('discussion_model_' . $value, 'local_lid');
             $modeloptions[$value] = $label;
         }
@@ -401,10 +438,10 @@ function local_lid_coursemodule_standard_elements($formwrapper, $mform): void {
  * Save LID settings after the forum Edit Settings form is submitted.
  *
  * Saves:
- *   - local_lid_enabled     (int 0|1)   → local_lid_forum_config.enabled
- *   - local_lid_discussion_model (string) → local_lid_forum_config.discussion_model
+ *   - local_lid_enabled            (int 0|1)  to local_lid_forum_config.enabled
+ *   - local_lid_discussion_model   (string)   to local_lid_forum_config.discussion_model
  *
- * Called by Moodle for every activity module — bails for non-forum.
+ * Called by Moodle for every activity module - bails for non-forum.
  *
  * @param stdClass $data   The submitted form data object.
  * @param stdClass $course The course record.
@@ -418,7 +455,7 @@ function local_lid_coursemodule_edit_post_actions($data, $course): stdClass {
         return $data;
     }
 
-    // Force-disabled site-wide — do not save any forum-level state change.
+    // Force-disabled site-wide - do not save any forum-level state change.
     if ((bool) get_config('local_lid', 'lid_force_disabled')) {
         return $data;
     }
@@ -434,7 +471,7 @@ function local_lid_coursemodule_edit_post_actions($data, $course): stdClass {
         ? (int) (bool) $data->local_lid_enabled
         : 0;
 
-    // Validate discussion_model — reject unknown values, fall back to default.
+    // Validate discussion_model - reject unknown values, fall back to default.
     $validmodels = [
         \local_lid\llm\prompt_builder::MODEL_INDEPENDENT_FIRST,
         \local_lid\llm\prompt_builder::MODEL_OPEN_ENGAGEMENT,
@@ -470,7 +507,7 @@ function local_lid_coursemodule_edit_post_actions($data, $course): stdClass {
 }
 
 // =============================================================================
-// Course administration navigation — course settings page
+// Course administration navigation - course settings page
 // =============================================================================
 
 /**
