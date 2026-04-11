@@ -31,15 +31,21 @@ defined('MOODLE_INTERNAL') || die();
  *
  * Each execution performs three phases in order:
  *
- * PHASE 0 — Orphaned claim recovery
- *   Before doing any work, releases queue items that were claimed more than
- *   10 minutes ago but never completed. This self-heals runs that were
+ * PHASE 0 - Orphaned claim recovery
+ *   Before doing any work, releases queue items whose timeclaimed value is
+ *   older than CLAIM_STALE_SECONDS. This self-heals runs that were
  *   interrupted by LLM timeouts, 503 errors, or PHP process termination.
  *   The release_claimed() helper only releases rows from the *current* run,
  *   so without this step, rows claimed by a crashed prior run are permanently
  *   stuck with timeclaimed IS NOT NULL and never re-enter the candidate pool.
  *
- * PHASE 1 — Close detection (cron-driven triggers)
+ *   IMPORTANT: timeclaimed is refreshed per-item inside the worker loop (see
+ *   Phase 2). The staleness threshold therefore measures "how long has this
+ *   single item been actively held by a worker" and not "how long ago was the
+ *   batch first claimed". This prevents long-running batches from having their
+ *   own in-flight items re-claimed by an overlapping cron run.
+ *
+ * PHASE 1 - Close detection (cron-driven triggers)
  *   Scans LID-enabled forums for two automatic close conditions that do not
  *   produce Moodle events:
  *     a) Cut-off date has passed (forum.cutoffdate > 0 AND <= now).
@@ -47,15 +53,21 @@ defined('MOODLE_INTERNAL') || die();
  *        timer (forum.lockdiscussionafter > 0 and last post in every
  *        discussion is older than the lock threshold).
  *   For each newly-closed forum detected, calls observer::queue_forum_analysis()
- *   to create analysis rows and queue them. A forum is only queued once —
+ *   to create analysis rows and queue them. A forum is only queued once -
  *   detection is skipped if any student_forum row for the forum already has
  *   status 'pending', 'processing', or 'complete'.
  *
- * PHASE 2 — Queue drain
+ * PHASE 2 - Queue drain
  *   Claims a batch of queue items (student_forum and thread scope) and
  *   processes each via the LLM. Success is determined by whether analysis_json
- *   was written — aggregation errors are caught separately and do not cause
+ *   was written - aggregation errors are caught separately and do not cause
  *   a success to be reported as failure.
+ *
+ *   Each item's timeclaimed is refreshed to time() immediately before its
+ *   LLM call begins. This ensures the Phase 0 staleness window applies
+ *   per-item rather than per-batch, so processing 15 items at 60 seconds
+ *   each does not cause the first items in the batch to appear orphaned
+ *   relative to the last items.
  *
  *   Each LLM prompt includes a structured assessment metadata block containing
  *   userid, forumid, analysisid, scope, and a UTC timestamp. This metadata
@@ -63,26 +75,31 @@ defined('MOODLE_INTERNAL') || die();
  *   logs (e.g. Google AI Studio), enabling full audit correlation between
  *   Moodle records and external call logs without relying on token fingerprinting.
  *
- * PHASE 3 — Aggregation + notification
+ * PHASE 3 - Aggregation + notification
  *   After the batch completes, triggers forum and course aggregate recomputation
  *   for any forum that had at least one successful analysis this run.
  *   Sends completion notifications to instructors for those forums if the
  *   forum's full analysis set is now complete (no remaining pending rows).
  *   Notification failures (including invalid email addresses) are caught and
- *   logged as warnings — they never cause a completed analysis job to be
+ *   logged as warnings - they never cause a completed analysis job to be
  *   re-queued or counted as failed.
  *
  * Audit trail:
  *   A row is written to local_lid_call_log for every processed queue item
  *   immediately after the LLM call completes and before the queue item is
- *   deleted. This provides a permanent, append-only record that can be used
- *   to correlate Moodle assessment records with external API provider logs
- *   using the timeclaimed / timeprocessed window and userid as anchors.
+ *   deleted. The timeclaimed value recorded is the per-item worker start
+ *   timestamp (not the original batch claim time), which gives a tighter
+ *   correlation window against external API provider logs.
  *
  * Concurrency safety:
  *   Queue items are claimed by setting timeclaimed = NOW() in a single UPDATE
  *   with a WHERE timeclaimed IS NULL guard. Two overlapping cron runs cannot
- *   process the same item.
+ *   process the same item at initial claim time. The per-item timeclaimed
+ *   refresh in the worker loop additionally prevents an overlapping run's
+ *   Phase 0 from re-releasing items that are still being actively processed.
+ *
+ *   A future enhancement (Bug 1 backlog Option C) will wrap execute() in a
+ *   Moodle cron lock to prevent overlap entirely.
  *
  * Success vs failure reporting:
  *   An item is counted as SUCCEEDED if analysis_json is non-null after
@@ -100,9 +117,13 @@ class process_queue extends \core\task\scheduled_task {
      * Number of seconds after which a claimed-but-unfinished queue item is
      * considered orphaned and released back to the candidate pool.
      *
-     * Set to 10 minutes — well above the maximum expected LLM call duration
-     * (~60 seconds for a full student_forum prompt) but short enough to
-     * recover within a few cron cycles after a crash or 503.
+     * Because timeclaimed is refreshed per-item at the start of each item's
+     * processing (see Phase 2 worker loop), this threshold measures the
+     * time a single item has been actively held by a worker, not the total
+     * batch duration. 600 seconds (10 minutes) is well above the maximum
+     * expected single LLM call duration (~60 seconds for a full
+     * student_forum prompt) but short enough to recover within a few cron
+     * cycles after a crash or 503.
      */
     const CLAIM_STALE_SECONDS = 600;
 
@@ -124,7 +145,7 @@ class process_queue extends \core\task\scheduled_task {
         $now = time();
 
         // ----------------------------------------------------------------
-        // PHASE 0 — Orphaned claim recovery.
+        // PHASE 0 - Orphaned claim recovery.
         //
         // release_claimed() only clears rows claimed at the exact timestamp
         // of the current run. Rows orphaned by a previous crashed or
@@ -133,6 +154,10 @@ class process_queue extends \core\task\scheduled_task {
         //
         // This step runs unconditionally at the start of every execution
         // to self-heal those orphaned rows before the candidate query runs.
+        //
+        // The per-item timeclaimed refresh in the worker loop ensures this
+        // query will not release items that are still being actively
+        // processed by a long-running concurrent batch.
         // ----------------------------------------------------------------
         $stale_threshold = $now - self::CLAIM_STALE_SECONDS;
         $stale_released  = $DB->execute(
@@ -148,12 +173,12 @@ class process_queue extends \core\task\scheduled_task {
         }
 
         // ----------------------------------------------------------------
-        // PHASE 1 — Cron-driven close detection.
+        // PHASE 1 - Cron-driven close detection.
         // ----------------------------------------------------------------
         $this->detect_closed_forums($now);
 
         // ----------------------------------------------------------------
-        // PHASE 2 — Claim and process a batch of queue items.
+        // PHASE 2 - Claim and process a batch of queue items.
         // ----------------------------------------------------------------
         $batchsize = max(1, (int)(get_config('local_lid', 'cron_batchsize') ?: 10));
 
@@ -210,18 +235,18 @@ class process_queue extends \core\task\scheduled_task {
             $analyser = new \local_lid\analysis\session_analyser();
         } catch (\local_lid\exception\llm_config_exception $e) {
             $this->release_claimed($ids, $now);
-            mtrace('local_lid process_queue: LLM not configured — aborting. ' . $e->getMessage());
+            mtrace('local_lid process_queue: LLM not configured - aborting. ' . $e->getMessage());
             return;
         }
 
         $succeeded      = 0;
         $failed         = 0;
-        $forums_updated = []; // forumid → courseid, for Phase 3.
+        $forums_updated = []; // forumid => courseid, for Phase 3.
 
         foreach ($claimed as $item) {
             $analysisrow = $DB->get_record('local_lid_analysis', ['id' => $item->analysisid]);
             if (!$analysisrow) {
-                mtrace("local_lid process_queue: analysis row {$item->analysisid} not found — skipping.");
+                mtrace("local_lid process_queue: analysis row {$item->analysisid} not found - skipping.");
                 $this->delete_queue_item($item->id);
                 continue;
             }
@@ -239,20 +264,38 @@ class process_queue extends \core\task\scheduled_task {
                 'timemodified' => time(),
             ]);
 
-            $json_written = false;
+            // ------------------------------------------------------------
+            // Refresh the claim timestamp to "now" for THIS item.
+            //
+            // CLAIM_STALE_SECONDS measures how long a single item has been
+            // actively held by a worker, not how long ago the batch was
+            // claimed. Without this refresh, items processed late in a long
+            // batch can exceed the staleness threshold while still being
+            // legitimately worked, causing the next cron run's Phase 0
+            // orphan release to re-queue them and produce duplicate API
+            // calls. See Bug 1 in handoff 2026-04-11.
+            //
+            // The audit log row written below uses $itemclaimtime (not the
+            // original batch claim time) so the call log timestamp gives a
+            // tighter correlation window against external API provider logs.
+            // ------------------------------------------------------------
+            $itemclaimtime = time();
+            $DB->set_field('local_lid_queue', 'timeclaimed', $itemclaimtime, ['id' => $item->id]);
+
+            $json_written  = false;
             $timeprocessed = null;
 
             try {
                 [$json_written, $timeprocessed] = $this->process_analysis_row(
                     $analyser,
                     $analysisrow,
-                    (int) $item->timeclaimed
+                    $itemclaimtime
                 );
             } catch (\local_lid\exception\llm_config_exception $e) {
-                // Config broken mid-run — release remaining and abort.
+                // Config broken mid-run - release remaining and abort.
                 $remaining = array_filter($claimed, fn($c) => $c->id !== $item->id);
                 $this->release_claimed(array_keys($remaining), $now);
-                mtrace('local_lid process_queue: LLM config error mid-run — stopping. ' . $e->getMessage());
+                mtrace('local_lid process_queue: LLM config error mid-run - stopping. ' . $e->getMessage());
                 $this->mark_analysis_error($analysisrow->id, $e->getMessage());
                 $failed++;
                 break;
@@ -268,13 +311,13 @@ class process_queue extends \core\task\scheduled_task {
             }
 
             if ($json_written) {
-                // SUCCESS — determined by JSON write, not by whether aggregation succeeded.
+                // SUCCESS - determined by JSON write, not by whether aggregation succeeded.
                 $succeeded++;
 
                 // Write audit log row before deleting the queue item.
                 $this->write_call_log(
                     $analysisrow,
-                    (int) $item->timeclaimed,
+                    $itemclaimtime,
                     $timeprocessed ?? time(),
                     true
                 );
@@ -296,7 +339,7 @@ class process_queue extends \core\task\scheduled_task {
                 // Write audit log row for failed call before marking error.
                 $this->write_call_log(
                     $analysisrow,
-                    (int) $item->timeclaimed,
+                    $itemclaimtime,
                     $timeprocessed ?? time(),
                     false
                 );
@@ -315,7 +358,7 @@ class process_queue extends \core\task\scheduled_task {
             "Total claimed: " . count($claimed) . ".");
 
         // ----------------------------------------------------------------
-        // PHASE 3 — Completion notifications.
+        // PHASE 3 - Completion notifications.
         // ----------------------------------------------------------------
         foreach ($forums_updated as $forumid => $courseid) {
             $this->maybe_notify_completion($forumid, $courseid);
@@ -323,7 +366,7 @@ class process_queue extends \core\task\scheduled_task {
     }
 
     // -------------------------------------------------------------------------
-    // Phase 1 — Close detection
+    // Phase 1 - Close detection
     // -------------------------------------------------------------------------
 
     /**
@@ -360,14 +403,14 @@ class process_queue extends \core\task\scheduled_task {
 
             if (!empty($forum->cutoffdate) && (int) $forum->cutoffdate <= $now) {
                 $should_queue = true;
-                mtrace("local_lid process_queue: forum {$forum->id} cut-off date passed — queuing analysis.");
+                mtrace("local_lid process_queue: forum {$forum->id} cut-off date passed - queuing analysis.");
             }
 
             if (!$should_queue && !empty($forum->lockdiscussionafter)) {
                 $threshold = $now - (int) $forum->lockdiscussionafter;
                 if ($this->all_discussions_past_inactivity_threshold((int) $forum->id, $threshold)) {
                     $should_queue = true;
-                    mtrace("local_lid process_queue: forum {$forum->id} inactivity lock threshold crossed — queuing analysis.");
+                    mtrace("local_lid process_queue: forum {$forum->id} inactivity lock threshold crossed - queuing analysis.");
                 }
             }
 
@@ -467,7 +510,7 @@ class process_queue extends \core\task\scheduled_task {
     }
 
     // -------------------------------------------------------------------------
-    // Phase 2 — Item processing
+    // Phase 2 - Item processing
     // -------------------------------------------------------------------------
 
     /**
@@ -483,7 +526,7 @@ class process_queue extends \core\task\scheduled_task {
      *
      * @param  \local_lid\analysis\session_analyser $analyser
      * @param  \stdClass                            $analysisrow
-     * @param  int                                  $timeclaimed  Queue claim timestamp for audit log.
+     * @param  int                                  $timeclaimed  Per-item worker start timestamp for audit log.
      * @return array{bool, int}  [json_written, timeprocessed]
      */
     private function process_analysis_row(
@@ -510,7 +553,7 @@ class process_queue extends \core\task\scheduled_task {
                 'id, name'
             );
             if (!$discussion) {
-                mtrace("local_lid process_queue: discussion {$analysisrow->discussionid} not found — skipping.");
+                mtrace("local_lid process_queue: discussion {$analysisrow->discussionid} not found - skipping.");
                 return [false, time()];
             }
             $prompt     = $builder->build_for_thread_by_id(
@@ -519,12 +562,12 @@ class process_queue extends \core\task\scheduled_task {
             );
             $promptHash = $builder->get_forum_analyzer_hash();
         } else {
-            mtrace("local_lid process_queue: unsupported scope '{$analysisrow->scope}' — skipping.");
+            mtrace("local_lid process_queue: unsupported scope '{$analysisrow->scope}' - skipping.");
             return [false, time()];
         }
 
         if (empty($prompt)) {
-            mtrace("local_lid process_queue: empty prompt for analysis row {$analysisrow->id} — no posts found.");
+            mtrace("local_lid process_queue: empty prompt for analysis row {$analysisrow->id} - no posts found.");
             return [false, time()];
         }
 
@@ -536,7 +579,7 @@ class process_queue extends \core\task\scheduled_task {
         // external call records back to specific Moodle users and analysis
         // rows without relying on post content fingerprinting.
         //
-        // userid is null for thread-scope calls — the block records 'null'
+        // userid is null for thread-scope calls - the block records 'null'
         // explicitly so the absence is visible in the API log rather than
         // silently absent.
         // ----------------------------------------------------------------
@@ -602,7 +645,7 @@ class process_queue extends \core\task\scheduled_task {
     }
 
     // -------------------------------------------------------------------------
-    // Phase 3 — Aggregation + notification
+    // Phase 3 - Aggregation + notification
     // -------------------------------------------------------------------------
 
     /**
@@ -621,7 +664,7 @@ class process_queue extends \core\task\scheduled_task {
      * Send a completion notification to instructors if the forum's full
      * analysis set is now complete.
      *
-     * Notification is a courtesy — it must never cause a completed analysis
+     * Notification is a courtesy - it must never cause a completed analysis
      * job to be re-queued or counted as failed. All notification failures,
      * including invalid email addresses, missing user properties, and
      * message delivery errors, are caught and logged as warnings only.
@@ -703,7 +746,7 @@ class process_queue extends \core\task\scheduled_task {
                 // notice that would otherwise bubble up and poison the job status.
                 $fulluser = \core_user::get_user($instructor->id);
                 if (!$fulluser) {
-                    mtrace("local_lid process_queue: notification skipped for user {$instructor->id} — user record not found.");
+                    mtrace("local_lid process_queue: notification skipped for user {$instructor->id} - user record not found.");
                     continue;
                 }
 
@@ -713,9 +756,9 @@ class process_queue extends \core\task\scheduled_task {
                 // explicitly rather than relying on the mail layer to throw.
                 // This is a production concern: invalid emails occur in real
                 // environments fed by HR systems, SIS integrations, and manual
-                // imports — not only in development with dummy data.
+                // imports - not only in development with dummy data.
                 if (empty($fulluser->email) || !validate_email($fulluser->email)) {
-                    mtrace("local_lid process_queue: notification skipped for user {$fulluser->id} — invalid or missing email address.");
+                    mtrace("local_lid process_queue: notification skipped for user {$fulluser->id} - invalid or missing email address.");
                     continue;
                 }
 
@@ -785,11 +828,15 @@ class process_queue extends \core\task\scheduled_task {
      * record that can be correlated with external API provider logs using the
      * timeclaimed / timeprocessed window and userid as anchors.
      *
-     * Failures are caught and logged as warnings — a call log write failure
+     * The timeclaimed value passed in is the per-item worker start timestamp
+     * (from the in-loop refresh), not the original batch claim time. This
+     * tighter window correlates more reliably against external provider logs.
+     *
+     * Failures are caught and logged as warnings - a call log write failure
      * must never cause a successfully-processed analysis to be re-queued.
      *
      * @param \stdClass $analysisrow   The analysis row that was processed.
-     * @param int       $timeclaimed   When the queue item was claimed.
+     * @param int       $timeclaimed   When the worker started this specific item.
      * @param int       $timeprocessed When the LLM call completed.
      * @param bool      $succeeded     Whether analysis_json was written.
      */
