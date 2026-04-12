@@ -255,7 +255,7 @@ class renderer extends \plugin_renderer_base {
             'has_discussion_value'   => $isv12,
             'employer_value'         => $employervalue,
             'has_employer_value'     => $hasemployervalue,
-            'has_instructor_notes'   => $hasinstructornotes,
+            'has_instructor_notes_content'   => $hasinstructornotes,
             'has_portfolio'          => $hasportfolio,
 
             // Timeline.
