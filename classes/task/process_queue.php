@@ -669,6 +669,16 @@ class process_queue extends \core\task\scheduled_task {
      * including invalid email addresses, missing user properties, and
      * message delivery errors, are caught and logged as warnings only.
      *
+     * Recipients are users with local/lid:triggeranalysis at the forum
+     * module context - teachers, editing teachers, and managers. This
+     * excludes students (who hold viewforumdashboard but not triggeranalysis)
+     * and prevents spurious notifications to the full enrolled user population.
+     *
+     * The module context is resolved via get_coursemodule_from_instance().
+     * If the course module record cannot be found (should not occur on a
+     * healthy instance), the check falls back to course context to avoid
+     * silently dropping notifications entirely.
+     *
      * Each instructor's user record is fetched in full via core_user::get_user()
      * to satisfy Moodle's messaging system requirement for a complete userto
      * object. A pre-flight email validation guard skips delivery for users
@@ -718,11 +728,24 @@ class process_queue extends \core\task\scheduled_task {
             return;
         }
 
-        // Find instructors with view capability for this forum.
-        $context     = \context_course::instance($courseid);
+        // Resolve forum module context for capability check.
+        // triggeranalysis is a CONTEXT_MODULE capability - checking at course
+        // context would produce incorrect results (over-inclusion or under-
+        // inclusion depending on role overrides at module level).
+        // Fall back to course context only if the cm lookup fails, so that
+        // a missing cm record does not silently suppress all notifications.
+        $cm      = get_coursemodule_from_instance('forum', $forumid, $courseid);
+        $context = $cm
+            ? \context_module::instance($cm->id)
+            : \context_course::instance($courseid);
+
+        // Find users with triggeranalysis capability at the forum module context.
+        // This targets teachers, editing teachers, and managers - the correct
+        // audience for analysis completion notifications. Students hold
+        // viewforumdashboard but not triggeranalysis and are excluded.
         $instructors = get_users_by_capability(
             $context,
-            'local/lid:viewforumdashboard',
+            'local/lid:triggeranalysis',
             'u.id'
         );
 
@@ -754,9 +777,6 @@ class process_queue extends \core\task\scheduled_task {
                 // Validate before attempting delivery so that invalid addresses
                 // (malformed domains, empty fields, legacy SIS data) are handled
                 // explicitly rather than relying on the mail layer to throw.
-                // This is a production concern: invalid emails occur in real
-                // environments fed by HR systems, SIS integrations, and manual
-                // imports - not only in development with dummy data.
                 if (empty($fulluser->email) || !validate_email($fulluser->email)) {
                     mtrace("local_lid process_queue: notification skipped for user {$fulluser->id} - invalid or missing email address.");
                     continue;
