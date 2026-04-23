@@ -17,7 +17,7 @@
 /**
  * Admin settings page for local_lid.
  *
- * Registered under Site Administration → Plugins → Local plugins →
+ * Registered under Site Administration -> Plugins -> Local plugins ->
  * Learning Intelligence Dashboard.
  *
  * Settings are stored in the standard Moodle config_plugins table under
@@ -58,7 +58,7 @@ if ($hassiteconfig) {
     $ADMIN->add('localplugins', $settings);
 
     // =========================================================================
-    // SECTION 1 — LID Enablement defaults
+    // SECTION 1 - LID Enablement defaults
     // =========================================================================
 
     $settings->add(new admin_setting_heading(
@@ -67,7 +67,7 @@ if ($hassiteconfig) {
         ''
     ));
 
-    // Force disable — hard stop, no teacher override.
+    // Force disable - hard stop, no teacher override.
     $settings->add(new admin_setting_configcheckbox(
         'local_lid/lid_force_disabled',
         new lang_string('settings_lid_force_disabled', 'local_lid'),
@@ -91,8 +91,16 @@ if ($hassiteconfig) {
         '0'
     ));
 
+    // Native theme mode toggle.
+    $settings->add(new admin_setting_configcheckbox(
+        'local_lid/lid_use_native_theme',
+        new lang_string('setting_use_native_theme', 'local_lid'),
+        new lang_string('setting_use_native_theme_desc', 'local_lid'),
+        '0'
+    ));
+
     // =========================================================================
-    // SECTION 2 — LLM API connection
+    // SECTION 2 - LLM API connection
     // =========================================================================
 
     $settings->add(new admin_setting_heading(
@@ -106,12 +114,12 @@ if ($hassiteconfig) {
         'local_lid/llm_endpoint',
         new lang_string('settings_llm_endpoint', 'local_lid'),
         new lang_string('settings_llm_endpoint_desc', 'local_lid'),
-        '',           // Default: empty — admin must supply.
+        '',           // Default: empty - admin must supply.
         PARAM_URL,
         60            // Input size (display width).
     ));
 
-    // API key — stored as a password field so it is masked in the UI.
+    // API key - stored as a password field so it is masked in the UI.
     // We do NOT use admin_setting_configpasswordunmask because we want to
     // encrypt the value at rest using Moodle's encrypt_to_db helper.
     // The actual encryption/decryption is handled in classes/llm/client.php.
@@ -133,7 +141,7 @@ if ($hassiteconfig) {
     ));
 
     // Max tokens.
-    // Default: 16384 — recommended baseline for peer discussion forum analysis.
+    // Default: 16384 - recommended baseline for peer discussion forum analysis.
     // Failed calls are automatically retried at double this value; ensure
     // llm_maxtokens × 2 does not exceed the model's output token ceiling.
     $settings->add(new admin_setting_configtext(
@@ -156,7 +164,7 @@ if ($hassiteconfig) {
     ));
 
     // =========================================================================
-    // SECTION 3 — Prompt template
+    // SECTION 3 - Prompt template
     // =========================================================================
 
     $settings->add(new admin_setting_heading(
@@ -165,7 +173,7 @@ if ($hassiteconfig) {
         ''
     ));
 
-    // Prompt template — large textarea.
+    // Prompt template - large textarea.
     // The default value is loaded from prompts/default-session-analyzer.md
     // at install time by the install hook in lib.php. Here we set an empty
     // default so Moodle's config system does not overwrite the DB value on
@@ -179,12 +187,12 @@ if ($hassiteconfig) {
         new lang_string('settings_prompt_template', 'local_lid'),
         new lang_string('settings_prompt_template_desc', 'local_lid'),
         '',           // Default empty; seeded from file on install.
-        PARAM_RAW,    // Raw — the prompt may contain special characters, JSON, etc.
+        PARAM_RAW,    // Raw - the prompt may contain special characters, JSON, etc.
         80,           // Cols.
         20            // Rows.
     ));
 
-    // Prompt lock — prevents course/forum level editing.
+    // Prompt lock - prevents course/forum level editing.
     $settings->add(new admin_setting_configcheckbox(
         'local_lid/prompt_locked',
         new lang_string('settings_prompt_locked', 'local_lid'),
@@ -193,7 +201,7 @@ if ($hassiteconfig) {
     ));
 
     // =========================================================================
-    // SECTION 4 — Analysis triggers and scheduling
+    // SECTION 4 - Analysis triggers and scheduling
     // =========================================================================
 
     $settings->add(new admin_setting_heading(
@@ -226,7 +234,7 @@ if ($hassiteconfig) {
         '1'           // Default: enabled.
     ));
 
-    // Cron interval — updates the scheduled task frequency when saved.
+    // Cron interval - updates the scheduled task frequency when saved.
     // set_updatedcallback wires local_lid_after_config_change() to fire
     // whenever this setting value changes. The callback reads the submitted
     // POST value directly (key: s_local_lid_cron_interval) to avoid the
