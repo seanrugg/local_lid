@@ -32,7 +32,7 @@
  *     other non-student roles are excluded from analysis queuing. Instructor
  *     posts still appear as conversational context in the LLM prompt so the
  *     assessed learner's replies can be understood in their full discourse
- *     context — they are simply not scored or given analysis rows.
+ *     context - they are simply not scored or given analysis rows.
  *
  *   - When a learner posts during an active discussion, their student_forum
  *     analysis row is created (status = 'pending') or flagged stale if a
@@ -40,18 +40,18 @@
  *
  *   - Analysis is queued when the forum is reliably closed. Three mechanisms:
  *
- *       1. discussion_locked event — instructor locked a thread manually.
+ *       1. discussion_locked event - instructor locked a thread manually.
  *          Observer checks whether ALL threads in the forum are now locked.
  *          If yes, the forum is considered closed and analysis is queued.
  *
- *       2. Cut-off date detection — handled by the cron task (process_queue).
+ *       2. Cut-off date detection - handled by the cron task (process_queue).
  *          Moodle does not fire a reliable event when a forum cut-off date passes.
  *
- *       3. Inactivity lock detection — also handled by cron. The forum setting
+ *       3. Inactivity lock detection - also handled by cron. The forum setting
  *          "Lock discussions after period of inactivity" is stored on the forum
  *          record; cron detects when the threshold has been crossed.
  *
- *       4. Manual trigger — instructor clicks "Run LID Analysis" in the Forum
+ *       4. Manual trigger - instructor clicks "Run LID Analysis" in the Forum
  *          LID dashboard. Calls queue_forum_analysis() with PRIORITY_MANUAL
  *          and bypasses all close-state checks.
  *
@@ -75,7 +75,7 @@ namespace local_lid;
 defined('MOODLE_INTERNAL') || die();
 
 /**
- * Observer class — static handlers called by the Moodle events system.
+ * Observer class - static handlers called by the Moodle events system.
  */
 class observer {
 
@@ -83,10 +83,10 @@ class observer {
     // Queue priority constants (must match install.xml and process_queue).
     // -------------------------------------------------------------------------
 
-    /** @var int Manual teacher request — highest priority. */
+    /** @var int Manual teacher request - highest priority. */
     const PRIORITY_MANUAL = 1;
 
-    /** @var int Event/cron triggered — standard priority. */
+    /** @var int Event/cron triggered - standard priority. */
     const PRIORITY_CRON = 2;
 
     // -------------------------------------------------------------------------
@@ -132,7 +132,7 @@ class observer {
      *
      * Fired when an instructor manually locks a discussion thread.
      * Checks whether ALL discussions in the forum are now locked.
-     * If yes, queues student_forum and thread analysis for the forum.
+     * If yes, queues student_forum analysis for the forum.
      *
      * @param \mod_forum\event\discussion_locked $event
      */
@@ -145,18 +145,18 @@ class observer {
         }
 
         if (!self::all_discussions_locked($forumid)) {
-            return; // Not all threads locked yet — wait.
+            return; // Not all threads locked yet - wait.
         }
 
         self::queue_forum_analysis($courseid, $forumid, self::PRIORITY_CRON);
     }
 
     // -------------------------------------------------------------------------
-    // Public — trigger interface (event handler + manual + cron)
+    // Public - trigger interface (event handler + manual + cron)
     // -------------------------------------------------------------------------
 
     /**
-     * Queue LID analysis for all learners and threads in a forum.
+     * Queue LID analysis for all learners in a forum.
      *
      * Called from:
      *   - discussion_locked handler (when all threads are locked)
@@ -165,11 +165,11 @@ class observer {
      *
      * Ensures student_forum rows exist for all learners who have posted
      * and hold a student-archetype role in the course context. Non-student
-     * posters (instructors, managers, etc.) are excluded — their posts
+     * posters (instructors, managers, etc.) are excluded - their posts
      * appear as conversational context in the prompt but are not scored.
      *
-     * Thread rows exist for all discussions. Then queues all rows
-     * with status 'pending' or 'stale'. Rows already 'processing' are skipped.
+     * Queues all student_forum rows with status 'pending' or 'stale'.
+     * Rows already 'processing' are skipped.
      *
      * @param  int $courseid
      * @param  int $forumid
@@ -193,14 +193,11 @@ class observer {
             self::upsert_student_forum_row($courseid, $forumid, $userid);
         }
 
-        // Ensure thread rows exist for all discussions.
-        self::upsert_thread_rows($courseid, $forumid);
-
-        // Fetch all student_forum and thread rows that need processing.
+        // Fetch all student_forum rows that need processing.
         $rows = $DB->get_records_select(
             'local_lid_analysis',
             "forumid = :forumid
-             AND scope IN ('student_forum', 'thread')
+             AND scope = 'student_forum'
              AND status IN ('pending', 'stale')",
             ['forumid' => $forumid]
         );
@@ -250,19 +247,19 @@ class observer {
     }
 
     // -------------------------------------------------------------------------
-    // Private — analysis row management
+    // Private - analysis row management
     // -------------------------------------------------------------------------
 
     /**
      * Upsert a student_forum analysis row for a given learner and forum.
      *
      * Status transitions:
-     *   No row       → insert with status 'pending'
-     *   'complete'   → update to 'stale'  (late post after analysis ran)
-     *   'error'      → update to 'pending' (allow retry)
-     *   'pending'    → no change
-     *   'stale'      → no change
-     *   'processing' → no change
+     *   No row       - insert with status 'pending'
+     *   'complete'   - update to 'stale'  (late post after analysis ran)
+     *   'error'      - update to 'pending' (allow retry)
+     *   'pending'    - no change
+     *   'stale'      - no change
+     *   'processing' - no change
      *
      * @param int $courseid
      * @param int $forumid
@@ -328,60 +325,8 @@ class observer {
         }
     }
 
-    /**
-     * Ensure a thread-scope analysis row exists for every discussion in the forum.
-     *
-     * Creates 'pending' rows for discussions that have no row yet.
-     * Does not modify existing rows.
-     *
-     * @param int $courseid
-     * @param int $forumid
-     */
-    private static function upsert_thread_rows(int $courseid, int $forumid): void {
-        global $DB;
-
-        $discussions = $DB->get_records('forum_discussions', ['forum' => $forumid], '', 'id, name');
-        $now         = time();
-
-        foreach ($discussions as $discussion) {
-            if ($DB->record_exists('local_lid_analysis', [
-                'scope'        => 'thread',
-                'forumid'      => $forumid,
-                'discussionid' => $discussion->id,
-            ])) {
-                continue;
-            }
-
-            $record                 = new \stdClass();
-            $record->scope          = 'thread';
-            $record->courseid       = $courseid;
-            $record->forumid        = $forumid;
-            $record->discussionid   = $discussion->id;
-            $record->postid         = null;
-            $record->userid         = null;
-            $record->analysis_json  = null;
-            $record->schema_version = '1.2';
-            $record->status         = 'pending';
-            $record->error_message  = null;
-            $record->llm_model      = null;
-            $record->prompt_hash    = null;
-            $record->timecreated    = $now;
-            $record->timemodified   = $now;
-
-            try {
-                $DB->insert_record('local_lid_analysis', $record);
-            } catch (\dml_exception $e) {
-                debugging(
-                    'local_lid observer: failed to create thread row for discussion ' .
-                    $discussion->id . ': ' . $e->getMessage(),
-                    DEBUG_DEVELOPER
-                );
-            }
-        }
-    }
-
     // -------------------------------------------------------------------------
-    // Private — forum close detection helpers
+    // Private - forum close detection helpers
     // -------------------------------------------------------------------------
 
     /**
@@ -428,13 +373,13 @@ class observer {
     }
 
     // -------------------------------------------------------------------------
-    // Private — role filtering helpers
+    // Private - role filtering helpers
     // -------------------------------------------------------------------------
 
     /**
      * Return array of user ids who hold a student-archetype role in the course.
      *
-     * Uses get_archetype_roles('student') to resolve role ids portably —
+     * Uses get_archetype_roles('student') to resolve role ids portably -
      * the student role id is not fixed across Moodle installations.
      *
      * @param  int   $courseid
@@ -495,7 +440,7 @@ class observer {
     }
 
     // -------------------------------------------------------------------------
-    // Private — forum enabled check + event helpers
+    // Private - forum enabled check + event helpers
     // -------------------------------------------------------------------------
 
     /**
@@ -529,9 +474,9 @@ class observer {
      * Return true if LID analysis is effectively enabled for the forum.
      *
      * Resolution order:
-     *   1. Site force-disable → always false.
-     *   2. Forum-level config row → use its enabled value if the row exists.
-     *   3. Site default → fall back to lid_default_enabled.
+     *   1. Site force-disable - always false.
+     *   2. Forum-level config row - use its enabled value if the row exists.
+     *   3. Site default - fall back to lid_default_enabled.
      *
      * @param  int $forumid
      * @return bool
