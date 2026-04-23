@@ -429,3 +429,10 @@ $string['course_settings_prompt_readonly_desc']   = 'This is the site-level asse
 // ---------------------------------------------------------------------------
 
 $string['messageprovider:analysis_complete'] = 'LID analysis completion notifications';
+
+// ---------------------------------------------------------------------------
+// Admin settings - Native theme toggle
+// ---------------------------------------------------------------------------
+
+$string['setting_use_native_theme'] = 'Use Moodle native theme for dashboards';
+$string['setting_use_native_theme_desc'] = 'When enabled, LID dashboards will render using your site\'s active Moodle theme (Bootstrap classes). When disabled, LID uses its custom futuristic styling with dark theme and accent colors. Default: disabled (futuristic mode).';
