@@ -37,13 +37,12 @@ defined('MOODLE_INTERNAL') || die();
  *   - Their student_forum analysis card (if complete)
  *   - A stale warning if their row has status = 'stale' (late post after analysis)
  *   - Top Bloom's level and top competency score derived from their student_forum JSON
- *   - Thread-level analysis cards for each discussion they participated in
  *
  * Access control:
  *   - Users with local/lid:viewpeeranalysis see all student tabs (full instructor view).
  *   - Users without viewpeeranalysis (typically students) see only the forum
  *     aggregate tab and their own student tab. No peer data is sent to the
- *     template — filtering is server-side to prevent data leakage.
+ *     template - filtering is server-side to prevent data leakage.
  *
  * Data structure exported to template:
  *
@@ -53,54 +52,48 @@ defined('MOODLE_INTERNAL') || die();
  *   cmid                   int
  *   lid_enabled            bool
  *   disabled_notice        string
- *   discussion_model       string   — e.g. 'open_engagement'
- *   discussion_model_label string   — full human-readable description
- *   discussion_models      array    — [{value, label, description, selected}]
+ *   discussion_model       string   - e.g. 'open_engagement'
+ *   discussion_model_label string   - full human-readable description
+ *   discussion_models      array    - [{value, label, description, selected}]
  *                                     for the forum_config.mustache radio selector
- *   aggregate_html         string   — forum-scope aggregate card HTML (or '')
+ *   aggregate_html         string   - forum-scope aggregate card HTML (or '')
  *   has_aggregate          bool
- *   stale_notice           bool     — true if any student row is stale
+ *   stale_notice           bool     - true if any student row is stale
  *   last_updated           string
- *   analysis_pending       bool     — true if any rows are pending/processing
- *   students               array    — filtered by viewpeeranalysis capability
+ *   analysis_pending       bool     - true if any rows are pending/processing
+ *   students               array    - filtered by viewpeeranalysis capability
  *     userid               int
  *     fullname             string
  *     userpic              string
- *     post_count           int      — total forum posts by this learner
+ *     post_count           int      - total forum posts by this learner
  *     top_bloom            int
  *     top_bloom_label      string
  *     top_score            int
- *     cpi_score            int      — 0 if not available
+ *     cpi_score            int      - 0 if not available
  *     cpi_band             string
- *     student_html         string   — student_forum card HTML (or '')
+ *     student_html         string   - student_forum card HTML (or '')
  *     has_student_lid      bool
- *     is_stale             bool     — true if student_forum row is stale
- *     is_pending           bool     — true if student_forum row is pending/processing
- *     threads              array
- *       discussionid       int
- *       subject            string
- *       thread_html        string   — thread card HTML (or '')
- *       has_thread_lid     bool
- *       status             string
+ *     is_stale             bool     - true if student_forum row is stale
+ *     is_pending           bool     - true if student_forum row is pending/processing
  *   can_trigger            bool
  *   can_configure          bool
- *   can_view_peers         bool     — true if user can see all student tabs
- *   owndata_notice         string   — notice shown when peer data is hidden (or '')
+ *   can_view_peers         bool     - true if user can see all student tabs
+ *   owndata_notice         string   - notice shown when peer data is hidden (or '')
  *   trigger_url            string
  *   config_url             string
  *
  *   Competency variables (v0.6.0):
- *   competency_site_ok     bool     — true if Moodle competency subsystem is enabled
- *   competency_enabled     bool     — true if competencies enabled at course level
+ *   competency_site_ok     bool     - true if Moodle competency subsystem is enabled
+ *   competency_enabled     bool     - true if competencies enabled at course level
  *                                     (course setting with site-default fallback)
- *   has_competencies       bool     — true if course has linked competencies
- *   competency_mode        string   — 'inherit' | 'exclude' | 'specific'
+ *   has_competencies       bool     - true if course has linked competencies
+ *   competency_mode        string   - 'inherit' | 'exclude' | 'specific'
  *                                     derived from local_lid_forum_config.competency_ids
- *   competency_mode_inherit bool    — Mustache conditional helper
- *   competency_mode_exclude bool    — Mustache conditional helper
- *   competency_mode_specific bool   — Mustache conditional helper
- *   competency_ids_json    string   — raw JSON array from DB column (or '[]')
- *   course_competencies    array    — [{id, shortname, description, selected}]
+ *   competency_mode_inherit bool    - Mustache conditional helper
+ *   competency_mode_exclude bool    - Mustache conditional helper
+ *   competency_mode_specific bool   - Mustache conditional helper
+ *   competency_ids_json    string   - raw JSON array from DB column (or '[]')
+ *   course_competencies    array    - [{id, shortname, description, selected}]
  *                                     for the checklist; selected=true when competency_mode
  *                                     is 'specific' and the ID appears in competency_ids_json
  */
@@ -161,7 +154,7 @@ class forum_lid_page implements \renderable, \templatable {
             ? ($config->discussion_model ?? \local_lid\llm\prompt_builder::MODEL_OPEN_ENGAGEMENT)
             : \local_lid\llm\prompt_builder::MODEL_OPEN_ENGAGEMENT;
 
-        // Validate — fall back to default if stored value is unrecognised.
+        // Validate - fall back to default if stored value is unrecognised.
         $validmodels = [
             \local_lid\llm\prompt_builder::MODEL_INDEPENDENT_FIRST,
             \local_lid\llm\prompt_builder::MODEL_OPEN_ENGAGEMENT,
@@ -214,7 +207,7 @@ class forum_lid_page implements \renderable, \templatable {
                 'owndata_notice'           => '',
                 'trigger_url'              => $triggerurl,
                 'config_url'               => $configurl,
-                // Competency keys — safe defaults for disabled forum.
+                // Competency keys - safe defaults for disabled forum.
                 'competency_site_ok'       => $competencydata['competency_site_ok'],
                 'competency_enabled'       => $competencydata['competency_enabled'],
                 'has_competencies'         => $competencydata['has_competencies'],
@@ -248,31 +241,12 @@ class forum_lid_page implements \renderable, \templatable {
             'timemodified ASC'
         );
 
-        // Fetch thread-scope analysis rows indexed by discussionid.
-        $threadrows  = $DB->get_records_select(
-            'local_lid_analysis',
-            "scope = 'thread' AND forumid = :forumid",
-            ['forumid' => $forumid]
-        );
-        $threadbydisc = [];
-        foreach ($threadrows as $tr) {
-            $threadbydisc[(int) $tr->discussionid] = $tr;
-        }
-
-        // Fetch all discussions in this forum for thread tab building.
-        $discussions = $DB->get_records(
-            'forum_discussions',
-            ['forum' => $forumid],
-            'timemodified DESC',
-            'id, name'
-        );
-
         $stalefound   = false;
         $pendingfound = false;
         $students     = [];
 
         // If the user cannot view peer data, filter student rows to only
-        // include their own record. This is server-side filtering — no peer
+        // include their own record. This is server-side filtering - no peer
         // data is ever sent to the template or rendered in HTML.
         $currentuserid = (int) $USER->id;
         if (!$canviewpeers) {
@@ -320,28 +294,6 @@ class forum_lid_page implements \renderable, \templatable {
                 ['forumid' => $forumid, 'userid' => $userid]
             );
 
-            $threadcards = [];
-            foreach ($discussions as $disc) {
-                $discid = (int) $disc->id;
-                $trow   = $threadbydisc[$discid] ?? null;
-
-                $threadhtml = '';
-                if ($trow && $trow->status === 'complete' && !empty($trow->analysis_json)) {
-                    $threadhtml = $output->render_analysis_card(
-                        $trow->analysis_json,
-                        ['compact' => true, 'show_portfolio' => false, 'show_timeline' => true]
-                    );
-                }
-
-                $threadcards[] = [
-                    'discussionid'   => $discid,
-                    'subject'        => format_string($disc->name),
-                    'thread_html'    => $threadhtml,
-                    'has_thread_lid' => !empty($threadhtml),
-                    'status'         => $trow ? $trow->status : 'pending',
-                ];
-            }
-
             $userpic = $output->user_picture($user, [
                 'size'     => 32,
                 'courseid' => $courseid,
@@ -362,7 +314,6 @@ class forum_lid_page implements \renderable, \templatable {
                 'has_student_lid' => ($srow->status === 'complete' && !empty($studenthtml)),
                 'is_stale'        => $isstale,
                 'is_pending'      => $ispending,
-                'threads'         => $threadcards,
                 'student_url'     => (new \moodle_url('/local/lid/student_view.php', [
                     'userid'   => $userid,
                     'courseid' => $courseid,
@@ -421,18 +372,18 @@ class forum_lid_page implements \renderable, \templatable {
      * Resolve all competency-related context variables for the template.
      *
      * Implements the three-level resolution chain:
-     *   Site level  → core_competency subsystem enabled?
-     *   Course level → competencies_enabled in local_lid_settings (with site default fallback)
-     *   Forum level  → competency_ids in local_lid_forum_config (three-state semantics)
+     *   Site level  - core_competency subsystem enabled?
+     *   Course level - competencies_enabled in local_lid_settings (with site default fallback)
+     *   Forum level  - competency_ids in local_lid_forum_config (three-state semantics)
      *
      * The course competency list is only fetched when both the subsystem is on
-     * AND course-level competencies are enabled — avoiding wasted API calls and
+     * AND course-level competencies are enabled - avoiding wasted API calls and
      * potential fatals when the subsystem is off.
      *
      * Three-state competency_ids semantics:
-     *   null / missing → 'inherit'  (use all course competencies)
-     *   '[]'           → 'exclude'  (explicitly disable for this forum)
-     *   '[3,7,12]'     → 'specific' (evaluate only these IDs)
+     *   null / missing - 'inherit'  (use all course competencies)
+     *   '[]'           - 'exclude'  (explicitly disable for this forum)
+     *   '[3,7,12]'     - 'specific' (evaluate only these IDs)
      *
      * list_course_competencies() returns an array of associative arrays:
      *   ['competency' => \core_competency\competency, 'coursecompetency' => ...]
@@ -444,7 +395,7 @@ class forum_lid_page implements \renderable, \templatable {
      * @return array  Flat array of all competency template variables.
      */
     private function resolve_competency_context(int $courseid, $config): array {
-        // Safe defaults — returned as-is if any early condition fails.
+        // Safe defaults - returned as-is if any early condition fails.
         $defaults = [
             'competency_site_ok'       => false,
             'competency_enabled'       => false,
@@ -462,7 +413,7 @@ class forum_lid_page implements \renderable, \templatable {
         try {
             $siteok = \core_competency\api::is_enabled();
         } catch (\Exception $e) {
-            // Subsystem unavailable — return all defaults.
+            // Subsystem unavailable - return all defaults.
             return $defaults;
         }
 
@@ -520,7 +471,7 @@ class forum_lid_page implements \renderable, \templatable {
                     }
                 }
             } catch (\Exception $e) {
-                // Competency API unavailable or permission error — degrade gracefully.
+                // Competency API unavailable or permission error - degrade gracefully.
                 $hascompetencies    = false;
                 $coursecompetencies = [];
             }
@@ -543,9 +494,9 @@ class forum_lid_page implements \renderable, \templatable {
      * Decode the raw competency_ids column value into mode, IDs, and JSON string.
      *
      * Three-state semantics:
-     *   null / not set → mode 'inherit',  ids [], json '[]'
-     *   '[]'           → mode 'exclude',  ids [], json '[]'
-     *   '[3,7,12]'     → mode 'specific', ids [3,7,12], json '[3,7,12]'
+     *   null / not set - mode 'inherit',  ids [], json '[]'
+     *   '[]'           - mode 'exclude',  ids [], json '[]'
+     *   '[3,7,12]'     - mode 'specific', ids [3,7,12], json '[3,7,12]'
      *
      * An unparseable value is treated as 'inherit' to fail safe.
      *
@@ -553,24 +504,24 @@ class forum_lid_page implements \renderable, \templatable {
      * @return array  [string $mode, int[] $ids, string $json]
      */
     private function resolve_competency_mode(?string $rawids): array {
-        // null → inherit.
+        // null - inherit.
         if ($rawids === null) {
             return ['inherit', [], '[]'];
         }
 
         $decoded = json_decode($rawids, true);
 
-        // Unparseable → fail safe to inherit.
+        // Unparseable - fail safe to inherit.
         if (!is_array($decoded)) {
             return ['inherit', [], '[]'];
         }
 
-        // Empty array → exclude.
+        // Empty array - exclude.
         if (count($decoded) === 0) {
             return ['exclude', [], '[]'];
         }
 
-        // Non-empty array → specific.
+        // Non-empty array - specific.
         $ids  = array_map('intval', $decoded);
         $json = json_encode($ids);
         return ['specific', $ids, $json];
@@ -580,10 +531,10 @@ class forum_lid_page implements \renderable, \templatable {
      * Build the discussion_models array for forum_config.mustache.
      *
      * Returns an array of option objects for the radio button selector:
-     *   value       — model constant string (e.g. 'open_engagement')
-     *   label       — short display name from lang strings
-     *   description — full description from lang strings
-     *   selected    — bool, true for the currently active model
+     *   value       - model constant string (e.g. 'open_engagement')
+     *   label       - short display name from lang strings
+     *   description - full description from lang strings
+     *   selected    - bool, true for the currently active model
      *
      * @param  string $currentmodel  The currently saved discussion model value.
      * @return array
