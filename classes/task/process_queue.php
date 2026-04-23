@@ -58,9 +58,9 @@ defined('MOODLE_INTERNAL') || die();
  *   status 'pending', 'processing', or 'complete'.
  *
  * PHASE 2 - Queue drain
- *   Claims a batch of queue items (student_forum and thread scope) and
- *   processes each via the LLM. Success is determined by whether analysis_json
- *   was written - aggregation errors are caught separately and do not cause
+ *   Claims a batch of queue items (student_forum scope only) and processes
+ *   each via the LLM. Success is determined by whether analysis_json was
+ *   written - aggregation errors are caught separately and do not cause
  *   a success to be reported as failure.
  *
  *   Each item's timeclaimed is refreshed to time() immediately before its
@@ -189,7 +189,7 @@ class process_queue extends \core\task\scheduled_task {
               WHERE q.timeclaimed IS NULL
                 AND q.timevisible <= :now
                 AND q.attempts < :maxattempts
-                AND a.scope IN ('student_forum', 'thread')
+                AND a.scope = 'student_forum'
            ORDER BY q.priority ASC, q.timevisible ASC",
             [
                 'now'         => $now,
@@ -516,10 +516,11 @@ class process_queue extends \core\task\scheduled_task {
     /**
      * Process a single analysis row by building the prompt and calling the LLM.
      *
-     * Handles student_forum and thread scope. Injects a structured assessment
-     * metadata block into the prompt before sending, embedding userid, forumid,
-     * analysisid, scope, and a UTC timestamp. This metadata appears in external
-     * API provider logs and enables audit correlation without token fingerprinting.
+     * Handles student_forum scope only (thread scope deprecated in v0.8.0).
+     * Injects a structured assessment metadata block into the prompt before
+     * sending, embedding userid, forumid, analysisid, scope, and a UTC timestamp.
+     * This metadata appears in external API provider logs and enables audit
+     * correlation without token fingerprinting.
      *
      * Validates the returned JSON, strips any markdown fences via the validator,
      * and writes clean re-encoded JSON to local_lid_analysis on success.
@@ -546,21 +547,6 @@ class process_queue extends \core\task\scheduled_task {
             $forumname = $DB->get_field('forum', 'name', ['id' => $analysisrow->forumid]) ?? '';
             $prompt    = $builder->build_for_student_forum((int) $analysisrow->userid, $forumname);
             $promptHash = $builder->get_forum_analyzer_hash();
-        } else if ($analysisrow->scope === 'thread') {
-            $discussion = $DB->get_record(
-                'forum_discussions',
-                ['id' => $analysisrow->discussionid],
-                'id, name'
-            );
-            if (!$discussion) {
-                mtrace("local_lid process_queue: discussion {$analysisrow->discussionid} not found - skipping.");
-                return [false, time()];
-            }
-            $prompt     = $builder->build_for_thread_by_id(
-                (int) $analysisrow->discussionid,
-                $discussion->name
-            );
-            $promptHash = $builder->get_forum_analyzer_hash();
         } else {
             mtrace("local_lid process_queue: unsupported scope '{$analysisrow->scope}' - skipping.");
             return [false, time()];
@@ -579,13 +565,9 @@ class process_queue extends \core\task\scheduled_task {
         // external call records back to specific Moodle users and analysis
         // rows without relying on post content fingerprinting.
         //
-        // userid is null for thread-scope calls - the block records 'null'
-        // explicitly so the absence is visible in the API log rather than
-        // silently absent.
+        // userid is included for student_forum scope.
         // ----------------------------------------------------------------
-        $useridlabel = ($analysisrow->scope === 'student_forum' && !empty($analysisrow->userid))
-            ? (int) $analysisrow->userid
-            : 'null';
+        $useridlabel = (!empty($analysisrow->userid)) ? (int) $analysisrow->userid : 'null';
 
         $metadatablock = implode("\n", [
             '## LID Assessment Metadata',
