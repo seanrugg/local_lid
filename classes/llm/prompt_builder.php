@@ -44,7 +44,7 @@ defined('MOODLE_INTERNAL') || die();
  * header so the LLM applies the correct Critical Discourse variant (Rubric 2).
  *
  * Exact word_count and character_count are computed in PHP from the assembled post
- * content and injected into the context header — the LLM reads them directly rather
+ * content and injected into the context header - the LLM reads them directly rather
  * than estimating them.
  *
  * For student_forum analyses, the prompt includes the full conversational context
@@ -69,17 +69,17 @@ defined('MOODLE_INTERNAL') || die();
  *   which returns an array of {competency, coursecompetency} pairs. Each competency
  *   has shortname, description, and idnumber.
  *
- * Final structure — student_forum / thread analyses:
+ * Final structure - student_forum / thread analyses:
  *
- *   [CONTEXT HEADER]          ← includes discussion_model, word_count, character_count
+ *   [CONTEXT HEADER]          <- includes discussion_model, word_count, character_count
  *   ---
- *   [COMPETENCY BLOCK]        ← optional; only when competencies are resolved
+ *   [COMPETENCY BLOCK]        <- optional; only when competencies are resolved
  *   ---
  *   [FORUM DISCUSSION ANALYZER PROMPT]
  *   ---
- *   [ASSEMBLED POST CONTENT]  ← posts annotated with per-post word counts
+ *   [ASSEMBLED POST CONTENT]  <- posts annotated with per-post word counts
  *
- * Final structure — legacy post-scope analyses:
+ * Final structure - legacy post-scope analyses:
  *
  *   [PREAMBLE]
  *   ---
@@ -88,9 +88,9 @@ defined('MOODLE_INTERNAL') || die();
  *   [POST CONTENT BLOCK]
  *
  * Valid discussion_model values (stored in local_lid_forum_config.discussion_model):
- *   independent_first  — learners post original response before seeing peers
- *   open_engagement    — learners can read all posts before contributing (default)
- *   structured_debate  — learners argue assigned or chosen positions
+ *   independent_first  - learners post original response before seeing peers
+ *   open_engagement    - learners can read all posts before contributing (default)
+ *   structured_debate  - learners argue assigned or chosen positions
  *
  * Usage:
  *   $builder = new \local_lid\llm\prompt_builder($courseid, $forumid);
@@ -124,14 +124,14 @@ class prompt_builder {
      */
     const MODEL_DESCRIPTIONS = [
         self::MODEL_INDEPENDENT_FIRST =>
-            'Independent First — Learners post their own original response before seeing peers. ' .
+            'Independent First - Learners post their own original response before seeing peers. ' .
             'Assessment weights the original contribution heavily. Peer replies are engagement ' .
             'evidence but secondary to independent reasoning.',
         self::MODEL_OPEN_ENGAGEMENT   =>
-            'Open Engagement — Learners can read all posts before contributing. Peer-directed ' .
+            'Open Engagement - Learners can read all posts before contributing. Peer-directed ' .
             'critical discourse, synthesis, and constructive challenge are the primary expected behaviours.',
         self::MODEL_STRUCTURED_DEBATE =>
-            'Structured Debate — Learners argue assigned or chosen positions. Assessment focuses ' .
+            'Structured Debate - Learners argue assigned or chosen positions. Assessment focuses ' .
             'on advocacy, counterargument, evidence quality, and position defence.',
     ];
 
@@ -160,7 +160,7 @@ class prompt_builder {
     private string $competencyblock = '';
 
     /**
-     * Constructor — resolves and caches the active prompt template, discussion model,
+     * Constructor - resolves and caches the active prompt template, discussion model,
      * and competency block.
      *
      * @param int      $courseid Course id.
@@ -178,7 +178,7 @@ class prompt_builder {
     }
 
     // -------------------------------------------------------------------------
-    // Public — build methods
+    // Public - build methods
     // -------------------------------------------------------------------------
 
     /**
@@ -194,7 +194,7 @@ class prompt_builder {
      * Post composition stats (word_count, character_count) in the context
      * header reflect only the assessed learner's posts.
      *
-     * Uses the forum discussion analyzer prompt — not the session analyzer
+     * Uses the forum discussion analyzer prompt - not the session analyzer
      * or any course/forum-level prompt override.
      *
      * @param  int    $userid    Moodle user id of the learner.
@@ -289,6 +289,11 @@ class prompt_builder {
     /**
      * Build the complete prompt for all posts in a single discussion thread.
      *
+     * @deprecated Since v0.8.0. Thread scope analysis has been deprecated in favor
+     *             of student_forum scope. This method is retained for one release
+     *             cycle for backward compatibility but is no longer called by the
+     *             queue processor. Will be removed in v0.9.0.
+     *
      * Fetches all posts in the given discussion, pseudonymises authors as
      * Participant A, B, etc., annotates word counts, and assembles a context
      * header including the discussion_model, exact word_count, and character_count.
@@ -298,6 +303,12 @@ class prompt_builder {
      * @return string                Complete prompt. Empty if no posts exist.
      */
     public function build_for_thread_by_id(int $discussionid, string $subject): string {
+        debugging(
+            'build_for_thread_by_id() is deprecated and will be removed in v0.9.0. ' .
+            'Use build_for_student_forum() instead.',
+            DEBUG_DEVELOPER
+        );
+
         global $DB;
 
         $sql = "SELECT fp.id, fp.discussion, fp.userid, fp.message,
@@ -434,7 +445,7 @@ class prompt_builder {
     }
 
     // -------------------------------------------------------------------------
-    // Private — prompt resolution
+    // Private - prompt resolution
     // -------------------------------------------------------------------------
 
     /**
@@ -508,7 +519,7 @@ class prompt_builder {
     }
 
     // -------------------------------------------------------------------------
-    // Private — competency resolution
+    // Private - competency resolution
     // -------------------------------------------------------------------------
 
     /**
@@ -516,13 +527,13 @@ class prompt_builder {
      *
      * Resolution logic:
      *   1. Check if Moodle's competency subsystem is enabled site-wide.
-     *      If not → return '' (no block).
+     *      If not -> return '' (no block).
      *   2. Check if competencies_enabled = 1 at the course level.
-     *      If not → return '' (no block).
+     *      If not -> return '' (no block).
      *   3. If a forum is set, check competency_ids on local_lid_forum_config:
-     *      - null  → use all course competencies (inherit).
-     *      - '[]'  → exclude all competencies for this forum → return ''.
-     *      - '[3,7]' → filter to only these competency IDs.
+     *      - null  -> use all course competencies (inherit).
+     *      - '[]'  -> exclude all competencies for this forum -> return ''.
+     *      - '[3,7]' -> filter to only these competency IDs.
      *   4. Query core_competency\api::list_course_competencies() for the course.
      *   5. Apply forum-level filter if specific IDs were set.
      *   6. Format the surviving competencies into a prompt block.
@@ -543,11 +554,11 @@ class prompt_builder {
         // Step 3: Resolve forum-level competency_ids filter.
         $forumfilter = $this->resolve_forum_competency_filter();
         // $forumfilter is one of:
-        //   null   → inherit (use all)
-        //   []     → exclude all
-        //   [3,7]  → specific IDs only
+        //   null   -> inherit (use all)
+        //   []     -> exclude all
+        //   [3,7]  -> specific IDs only
         if (is_array($forumfilter) && empty($forumfilter)) {
-            // Explicitly excluded — empty array means "no competencies for this forum".
+            // Explicitly excluded - empty array means "no competencies for this forum".
             return '';
         }
 
@@ -608,7 +619,7 @@ class prompt_builder {
             return (bool) $coursesettings->competencies_enabled;
         }
 
-        // No course-level row — fall back to site default.
+        // No course-level row - fall back to site default.
         return (bool) get_config('local_lid', 'competencies_enabled_default');
     }
 
@@ -622,7 +633,7 @@ class prompt_builder {
         global $DB;
 
         if (!$this->forumid) {
-            return null; // No forum context → inherit all.
+            return null; // No forum context -> inherit all.
         }
 
         $raw = $DB->get_field(
@@ -631,7 +642,7 @@ class prompt_builder {
             ['forumid' => $this->forumid]
         );
 
-        // null or false (no row / null column) → inherit.
+        // null or false (no row / null column) -> inherit.
         if ($raw === null || $raw === false) {
             return null;
         }
@@ -639,12 +650,12 @@ class prompt_builder {
         // Decode JSON.
         $decoded = json_decode($raw, true);
 
-        // Invalid JSON or non-array → treat as inherit.
+        // Invalid JSON or non-array -> treat as inherit.
         if (!is_array($decoded)) {
             return null;
         }
 
-        // Empty array → exclude all. Populated array → specific IDs.
+        // Empty array -> exclude all. Populated array -> specific IDs.
         return array_map('intval', $decoded);
     }
 
@@ -663,7 +674,7 @@ class prompt_builder {
             // {competency: competency, coursecompetency: course_competency} pairs.
             $pairs = \core_competency\api::list_course_competencies($this->courseid);
         } catch (\Throwable $e) {
-            // API call failed — course may not exist, no framework linked, etc.
+            // API call failed - course may not exist, no framework linked, etc.
             return [];
         }
 
@@ -711,7 +722,7 @@ class prompt_builder {
             }
 
             if (!empty($description)) {
-                $entry .= ' — ' . $description;
+                $entry .= ' - ' . $description;
             }
 
             $lines[] = $entry;
@@ -724,7 +735,7 @@ class prompt_builder {
     }
 
     // -------------------------------------------------------------------------
-    // Private — file loaders
+    // Private - file loaders
     // -------------------------------------------------------------------------
 
     /**
@@ -764,7 +775,7 @@ class prompt_builder {
     }
 
     /**
-     * Helper — get a value from the site-level local_lid_settings row.
+     * Helper - get a value from the site-level local_lid_settings row.
      *
      * @param  string $field Column name.
      * @return mixed         Field value, or null if the row does not exist.
@@ -775,7 +786,7 @@ class prompt_builder {
     }
 
     // -------------------------------------------------------------------------
-    // Private — role resolution
+    // Private - role resolution
     // -------------------------------------------------------------------------
 
     /**
@@ -855,7 +866,7 @@ class prompt_builder {
     }
 
     // -------------------------------------------------------------------------
-    // Private — context header builders
+    // Private - context header builders
     // -------------------------------------------------------------------------
 
     /**
@@ -893,7 +904,7 @@ class prompt_builder {
             'Assessed learner\'s post composition:',
             '  Total posts:      ' . $stats['total_posts'],
             '  Threads:          ' . $stats['thread_count'] . ' discussion thread(s) contributed to',
-            '  Substantive (≥'   . self::SUBSTANTIVE_WORD_THRESHOLD . ' words): '
+            '  Substantive (>='   . self::SUBSTANTIVE_WORD_THRESHOLD . ' words): '
                 . $stats['substantive_count']
                 . ($stats['substantive_count'] > 0
                     ? ' (avg ' . $stats['substantive_avg_words'] . ' words)' : ''),
@@ -902,7 +913,7 @@ class prompt_builder {
                 . ($stats['short_count'] > 0
                     ? ' (avg ' . $stats['short_avg_words'] . ' words)' : ''),
             '',
-            'Exact totals (PHP-calculated — use these values directly):',
+            'Exact totals (PHP-calculated - use these values directly):',
             '  word_count:       ' . $stats['total_words'],
             '  character_count:  ' . $stats['total_characters'],
             '',
@@ -910,12 +921,12 @@ class prompt_builder {
             '  Peer learners:    ' . $peercount,
             '  Instructors:      ' . $instructorcount,
             '',
-            'IMPORTANT — Scoring scope:',
+            'IMPORTANT - Scoring scope:',
             'The content below includes the FULL conversational context from all threads',
             'the assessed learner participated in. Posts are labelled by author role:',
-            '  [ASSESSED LEARNER] — the learner being evaluated. Score ONLY these posts.',
-            '  Peer A, Peer B, etc. — other student participants. Context only; do NOT score.',
-            '  [INSTRUCTOR] — instructor/facilitator posts. Context only; do NOT score.',
+            '  [ASSESSED LEARNER] - the learner being evaluated. Score ONLY these posts.',
+            '  Peer A, Peer B, etc. - other student participants. Context only; do NOT score.',
+            '  [INSTRUCTOR] - instructor/facilitator posts. Context only; do NOT score.',
             '',
             'Peer and instructor posts are provided so you can accurately evaluate how the',
             'assessed learner engaged with others\' ideas, responded to challenges, built on',
@@ -953,7 +964,7 @@ class prompt_builder {
             '',
             'Post composition:',
             '  Total posts:      ' . $stats['total_posts'],
-            '  Substantive (≥'   . self::SUBSTANTIVE_WORD_THRESHOLD . ' words): '
+            '  Substantive (>='   . self::SUBSTANTIVE_WORD_THRESHOLD . ' words): '
                 . $stats['substantive_count']
                 . ($stats['substantive_count'] > 0
                     ? ' (avg ' . $stats['substantive_avg_words'] . ' words)' : ''),
@@ -962,7 +973,7 @@ class prompt_builder {
                 . ($stats['short_count'] > 0
                     ? ' (avg ' . $stats['short_avg_words'] . ' words)' : ''),
             '',
-            'Exact totals (PHP-calculated — use these values directly):',
+            'Exact totals (PHP-calculated - use these values directly):',
             '  word_count:       ' . $stats['total_words'],
             '  character_count:  ' . $stats['total_characters'],
             '',
@@ -975,7 +986,7 @@ class prompt_builder {
     }
 
     // -------------------------------------------------------------------------
-    // Private — content formatting
+    // Private - content formatting
     // -------------------------------------------------------------------------
 
     /**
@@ -1039,7 +1050,7 @@ class prompt_builder {
                 } else if ($role === 'instructor') {
                     $author = '[INSTRUCTOR]';
                 } else {
-                    // Peer — assign a consistent pseudonym.
+                    // Peer - assign a consistent pseudonym.
                     if (!isset($peermap[$uid])) {
                         $peermap[$uid] = 'Peer ' . $peerletter;
                         $peerletter++;
@@ -1052,10 +1063,10 @@ class prompt_builder {
                 $date      = userdate($post->created,
                     get_string('strftimedatetimeshort', 'langconfig'));
                 $label     = $wordcount >= self::SUBSTANTIVE_WORD_THRESHOLD
-                    ? '[' . $wordcount . ' words — substantive]'
-                    : '[' . $wordcount . ' words — short]';
+                    ? '[' . $wordcount . ' words - substantive]'
+                    : '[' . $wordcount . ' words - short]';
 
-                $lines[] = '--- ' . $author . ' · ' . $date . ' · ' . $label . ' ---';
+                $lines[] = '--- ' . $author . ' - ' . $date . ' - ' . $label . ' ---';
                 $lines[] = $body;
                 $lines[] = '';
             }
@@ -1094,10 +1105,10 @@ class prompt_builder {
             $body      = $this->clean_post_body($post->message ?? '');
             $wordcount = $this->count_words($body);
             $label     = $wordcount >= self::SUBSTANTIVE_WORD_THRESHOLD
-                ? '[' . $wordcount . ' words — substantive]'
-                : '[' . $wordcount . ' words — short]';
+                ? '[' . $wordcount . ' words - substantive]'
+                : '[' . $wordcount . ' words - short]';
 
-            $lines[] = '--- ' . $author . ' · ' . $date . ' · ' . $label . ' ---';
+            $lines[] = '--- ' . $author . ' - ' . $date . ' - ' . $label . ' ---';
             $lines[] = $body;
             $lines[] = '';
         }
@@ -1167,7 +1178,7 @@ class prompt_builder {
     }
 
     // -------------------------------------------------------------------------
-    // Private — text utilities
+    // Private - text utilities
     // -------------------------------------------------------------------------
 
     /**
@@ -1208,8 +1219,8 @@ class prompt_builder {
      *   short_count           int,
      *   substantive_avg_words int,
      *   short_avg_words       int,
-     *   total_words           int   — exact total word count across all posts,
-     *   total_characters      int   — exact total character count across all posts,
+     *   total_words           int   - exact total word count across all posts,
+     *   total_characters      int   - exact total character count across all posts,
      *   thread_count          int,
      * }
      */
@@ -1255,7 +1266,7 @@ class prompt_builder {
     }
 
     // -------------------------------------------------------------------------
-    // Private — prompt assembly
+    // Private - prompt assembly
     // -------------------------------------------------------------------------
 
     /**
@@ -1267,7 +1278,7 @@ class prompt_builder {
      * Structure:
      *   [CONTEXT HEADER]
      *   ---
-     *   [COMPETENCY BLOCK]        ← only if competencies are resolved
+     *   [COMPETENCY BLOCK]        <- only if competencies are resolved
      *   ---
      *   [PROMPT TEMPLATE]
      *   ---
