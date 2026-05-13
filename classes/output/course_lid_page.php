@@ -41,7 +41,7 @@ defined('MOODLE_INTERNAL') || die();
  *   coursename           string
  *   haslid               bool
  *   noforums_notice      string
- *   aggregate_html       string   — pre-rendered analysis card HTML (or '')
+ *   aggregate_html       string   -- pre-rendered analysis card HTML (or '')
  *   has_aggregate        bool
  *   stale_notice         bool
  *   last_updated         string
@@ -49,7 +49,7 @@ defined('MOODLE_INTERNAL') || die();
  *     forumid            int
  *     forumname          string
  *     cmid               int
- *     analysis_html      string   — pre-rendered forum-scope card HTML (or '')
+ *     analysis_html      string   -- pre-rendered forum-scope card HTML (or '')
  *     has_analysis       bool
  *     post_count         int
  *     pending_count      int
@@ -57,6 +57,7 @@ defined('MOODLE_INTERNAL') || die();
  *     view_url           string
  *   can_trigger          bool
  *   trigger_url          string
+ *   use_native_theme     bool     -- true if native Moodle theme mode is enabled
  */
 class course_lid_page implements \renderable, \templatable {
 
@@ -84,6 +85,9 @@ class course_lid_page implements \renderable, \templatable {
         $courseid   = (int) $this->course->id;
         $cantrigger = has_capability('local/lid:triggeranalysis', $this->context);
 
+        // Resolve theme mode for conditional template includes.
+        $usenativetheme = (bool) get_config('local_lid', 'lid_use_native_theme');
+
         $enabledconfigs = $DB->get_records(
             'local_lid_forum_config',
             ['courseid' => $courseid, 'enabled' => 1],
@@ -92,17 +96,18 @@ class course_lid_page implements \renderable, \templatable {
 
         if (empty($enabledconfigs)) {
             return [
-                'courseid'        => $courseid,
-                'coursename'      => format_string($this->course->fullname),
-                'haslid'          => false,
-                'noforums_notice' => get_string('dashboard_course_noforums', 'local_lid'),
-                'aggregate_html'  => '',
-                'has_aggregate'   => false,
-                'stale_notice'    => false,
-                'last_updated'    => '',
-                'forums'          => [],
-                'can_trigger'     => $cantrigger,
-                'trigger_url'     => (new \moodle_url('/local/lid/ajax.php'))->out(false),
+                'courseid'         => $courseid,
+                'coursename'       => format_string($this->course->fullname),
+                'haslid'           => false,
+                'noforums_notice'  => get_string('dashboard_course_noforums', 'local_lid'),
+                'aggregate_html'   => '',
+                'has_aggregate'    => false,
+                'stale_notice'     => false,
+                'last_updated'     => '',
+                'forums'           => [],
+                'can_trigger'      => $cantrigger,
+                'trigger_url'      => (new \moodle_url('/local/lid/ajax.php'))->out(false),
+                'use_native_theme' => $usenativetheme,
             ];
         }
 
@@ -183,17 +188,18 @@ class course_lid_page implements \renderable, \templatable {
         }
 
         return [
-            'courseid'        => $courseid,
-            'coursename'      => format_string($this->course->fullname),
-            'haslid'          => true,
-            'noforums_notice' => '',
-            'aggregate_html'  => $aggregatehtml,
-            'has_aggregate'   => $hasaggregate,
-            'stale_notice'    => $stalenote,
-            'last_updated'    => $lastmod ? userdate($lastmod) : '',
-            'forums'          => $forums,
-            'can_trigger'     => $cantrigger,
-            'trigger_url'     => (new \moodle_url('/local/lid/ajax.php'))->out(false),
+            'courseid'         => $courseid,
+            'coursename'       => format_string($this->course->fullname),
+            'haslid'           => true,
+            'noforums_notice'  => '',
+            'aggregate_html'   => $aggregatehtml,
+            'has_aggregate'    => $hasaggregate,
+            'stale_notice'     => $stalenote,
+            'last_updated'     => $lastmod ? userdate($lastmod) : '',
+            'forums'           => $forums,
+            'can_trigger'      => $cantrigger,
+            'trigger_url'      => (new \moodle_url('/local/lid/ajax.php'))->out(false),
+            'use_native_theme' => $usenativetheme,
         ];
     }
 
