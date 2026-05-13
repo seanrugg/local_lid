@@ -36,12 +36,12 @@ defined('MOODLE_INTERNAL') || die();
  *
  *   userid               int
  *   fullname             string
- *   userpic              string   — HTML img tag
+ *   userpic              string   -- HTML img tag
  *   courseid             int
  *   coursename           string
  *   has_data             bool
  *   nodata_notice        string
- *   aggregate_html       string   — cross-forum student aggregate card HTML (or '')
+ *   aggregate_html       string   -- cross-forum student aggregate card HTML (or '')
  *   has_aggregate        bool
  *   stale_notice         bool
  *   last_updated         string
@@ -50,20 +50,21 @@ defined('MOODLE_INTERNAL') || die();
  *     forumname          string
  *     cmid               int
  *     forum_url          string
- *     student_html       string   — student_forum card HTML (or '')
+ *     student_html       string   -- student_forum card HTML (or '')
  *     has_student_lid    bool
- *     post_count         int      — actual posts by this learner in this forum
+ *     post_count         int      -- actual posts by this learner in this forum
  *     pending_count      int
- *     posts              array    — legacy post-scope detail rows (may be empty)
+ *     posts              array    -- legacy post-scope detail rows (may be empty)
  *       postid           int
  *       subject          string
  *       posted_date      string
- *       analysis_html    string   — compact post card HTML (or '')
+ *       analysis_html    string   -- compact post card HTML (or '')
  *       has_analysis     bool
  *       status           string
- *       status_html      string   — pre-rendered status badge HTML
+ *       status_html      string   -- pre-rendered status badge HTML
  *   can_trigger          bool
  *   trigger_url          string
+ *   use_native_theme     bool     -- true if native Moodle theme mode is enabled
  */
 class student_lid_page implements \renderable, \templatable {
 
@@ -179,7 +180,7 @@ class student_lid_page implements \renderable, \templatable {
             // Pre-render student_forum card.
             $studenthtml = $output->render_analysis_card($studentagg->analysis_json);
 
-            // Count actual forum posts by this user — same approach as forum_lid_page.php.
+            // Count actual forum posts by this user -- same approach as forum_lid_page.php.
             $postcount = (int) $DB->count_records_sql(
                 "SELECT COUNT(fp.id)
                    FROM {forum_posts} fp
@@ -263,21 +264,25 @@ class student_lid_page implements \renderable, \templatable {
             $studentforumaggs, $courseid, $userid, $output
         );
 
+        // Resolve theme mode for conditional template includes.
+        $usenativetheme = (bool) get_config('local_lid', 'lid_use_native_theme');
+
         return [
-            'userid'         => $userid,
-            'fullname'       => fullname($this->student),
-            'userpic'        => $userpic,
-            'courseid'       => $courseid,
-            'coursename'     => format_string($this->course->fullname),
-            'has_data'       => true,
-            'nodata_notice'  => '',
-            'aggregate_html' => $aggregatehtml,
-            'has_aggregate'  => !empty($aggregatehtml),
-            'stale_notice'   => $stale,
-            'last_updated'   => $lastmod ? userdate($lastmod) : '',
-            'forums'         => $forumsdata,
-            'can_trigger'    => $cantrigger,
-            'trigger_url'    => (new \moodle_url('/local/lid/ajax.php'))->out(false),
+            'userid'           => $userid,
+            'fullname'         => fullname($this->student),
+            'userpic'          => $userpic,
+            'courseid'         => $courseid,
+            'coursename'       => format_string($this->course->fullname),
+            'has_data'         => true,
+            'nodata_notice'    => '',
+            'aggregate_html'   => $aggregatehtml,
+            'has_aggregate'    => !empty($aggregatehtml),
+            'stale_notice'     => $stale,
+            'last_updated'     => $lastmod ? userdate($lastmod) : '',
+            'forums'           => $forumsdata,
+            'can_trigger'      => $cantrigger,
+            'trigger_url'      => (new \moodle_url('/local/lid/ajax.php'))->out(false),
+            'use_native_theme' => $usenativetheme,
         ];
     }
 
@@ -354,20 +359,21 @@ class student_lid_page implements \renderable, \templatable {
         bool $cantrigger
     ): array {
         return [
-            'userid'         => $userid,
-            'fullname'       => fullname($this->student),
-            'userpic'        => $userpic,
-            'courseid'       => $courseid,
-            'coursename'     => format_string($this->course->fullname),
-            'has_data'       => false,
-            'nodata_notice'  => get_string('dashboard_student_noposts', 'local_lid'),
-            'aggregate_html' => '',
-            'has_aggregate'  => false,
-            'stale_notice'   => false,
-            'last_updated'   => '',
-            'forums'         => [],
-            'can_trigger'    => $cantrigger,
-            'trigger_url'    => (new \moodle_url('/local/lid/ajax.php'))->out(false),
+            'userid'           => $userid,
+            'fullname'         => fullname($this->student),
+            'userpic'          => $userpic,
+            'courseid'         => $courseid,
+            'coursename'       => format_string($this->course->fullname),
+            'has_data'         => false,
+            'nodata_notice'    => get_string('dashboard_student_noposts', 'local_lid'),
+            'aggregate_html'   => '',
+            'has_aggregate'    => false,
+            'stale_notice'     => false,
+            'last_updated'     => '',
+            'forums'           => [],
+            'can_trigger'      => $cantrigger,
+            'trigger_url'      => (new \moodle_url('/local/lid/ajax.php'))->out(false),
+            'use_native_theme' => (bool) get_config('local_lid', 'lid_use_native_theme'),
         ];
     }
 }
