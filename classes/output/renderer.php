@@ -31,19 +31,24 @@ defined('MOODLE_INTERNAL') || die();
  *
  * Routes render() calls to the appropriate Mustache template by matching
  * the renderable class. All three dashboard surfaces share the same
- * render dispatch pattern — the output class provides the template data,
+ * render dispatch pattern -- the output class provides the template data,
  * the template name is derived from the class name.
  *
  * Template name mapping:
- *   course_lid_page   → local_lid/course_lid
- *   forum_lid_page    → local_lid/forum_lid
- *   student_lid_page  → local_lid/student_lid
+ *   course_lid_page   -> local_lid/course_lid
+ *   forum_lid_page    -> local_lid/forum_lid
+ *   student_lid_page  -> local_lid/student_lid
+ *
+ * Theme mode:
+ *   When lid_use_native_theme is enabled, render_analysis_card() and
+ *   render_status_badge() select Bootstrap-native template variants
+ *   (*_native.mustache) instead of the futuristic originals.
  *
  * Schema version handling:
- *   v1.0 / v1.1 — session analyzer output. ROI block, employer_value, portfolio.
- *   v1.2        — forum discussion analyzer output. discussion_value block (DCI,
- *                 participation_depth, retention_indicators), instructor_notes.
- *                 ROI, employer_value, and portfolio are absent.
+ *   v1.0 / v1.1 -- session analyzer output. ROI block, employer_value, portfolio.
+ *   v1.2        -- forum discussion analyzer output. discussion_value block (DCI,
+ *                  participation_depth, retention_indicators), instructor_notes.
+ *                  ROI, employer_value, and portfolio are absent.
  */
 class renderer extends \plugin_renderer_base {
 
@@ -85,7 +90,7 @@ class renderer extends \plugin_renderer_base {
     }
 
     // =========================================================================
-    // Shared panel helpers — called from entry point pages and AJAX responses
+    // Shared panel helpers -- called from entry point pages and AJAX responses
     // =========================================================================
 
     /**
@@ -94,6 +99,10 @@ class renderer extends \plugin_renderer_base {
      * Supports Schema v1.0, v1.1 (session analyzer), and v1.2 (forum
      * discussion analyzer). Schema version is detected from the JSON and
      * the appropriate template fields are populated accordingly.
+     *
+     * Template selection is controlled by the lid_use_native_theme admin
+     * setting: when enabled, the Bootstrap-native analysis_card_native
+     * template is used instead of the futuristic analysis_card template.
      *
      * Returns an empty string if the JSON is null or unparseable.
      *
@@ -115,11 +124,22 @@ class renderer extends \plugin_renderer_base {
         }
 
         $templatedata = $this->prepare_card_data($data, $options);
-        return $this->render_from_template('local_lid/analysis_card', $templatedata);
+
+        // Select template based on admin setting.
+        $usenativetheme = (bool) get_config('local_lid', 'lid_use_native_theme');
+        $template = $usenativetheme
+            ? 'local_lid/analysis_card_native'
+            : 'local_lid/analysis_card';
+
+        return $this->render_from_template($template, $templatedata);
     }
 
     /**
      * Render a status badge for an analysis record.
+     *
+     * Template selection is controlled by the lid_use_native_theme admin
+     * setting: when enabled, the Bootstrap-native status_badge_native
+     * template is used instead of the futuristic status_badge template.
      *
      * @param  string $status  One of: pending, processing, complete, error.
      * @return string HTML
@@ -132,29 +152,37 @@ class renderer extends \plugin_renderer_base {
             'error'      => get_string('status_error',      'local_lid'),
         ];
 
-        return $this->render_from_template('local_lid/status_badge', [
+        $badgedata = [
             'status'        => $status,
             'status_label'  => $labels[$status] ?? $status,
             'is_pending'    => $status === 'pending',
             'is_processing' => $status === 'processing',
             'is_complete'   => $status === 'complete',
             'is_error'      => $status === 'error',
-        ]);
+        ];
+
+        // Select template based on admin setting.
+        $usenativetheme = (bool) get_config('local_lid', 'lid_use_native_theme');
+        $template = $usenativetheme
+            ? 'local_lid/status_badge_native'
+            : 'local_lid/status_badge';
+
+        return $this->render_from_template($template, $badgedata);
     }
 
     // =========================================================================
-    // Private — template data preparation
+    // Private -- template data preparation
     // =========================================================================
 
     /**
      * Prepare a LID JSON data array for the analysis_card template.
      *
      * Branches on schema_version:
-     *   v1.0 / v1.1 — populates ROI, employer_value, portfolio blocks.
-     *                  Sets has_roi = true, has_discussion_value = false.
-     *   v1.2        — populates discussion_value (DCI), instructor_notes.
-     *                  Sets has_roi = false, has_discussion_value = true.
-     *                  employer_value and portfolio are suppressed.
+     *   v1.0 / v1.1 -- populates ROI, employer_value, portfolio blocks.
+     *                   Sets has_roi = true, has_discussion_value = false.
+     *   v1.2        -- populates discussion_value (DCI), instructor_notes.
+     *                   Sets has_roi = false, has_discussion_value = true.
+     *                   employer_value and portfolio are suppressed.
      *
      * @param  array $data     Decoded LID JSON array.
      * @param  array $options  Rendering options.
@@ -172,7 +200,7 @@ class renderer extends \plugin_renderer_base {
         $scores  = $data['scores']  ?? [];
         $meta    = $data['meta']    ?? [];
 
-        // Competencies — sorted by score descending, capped at 5 for compact.
+        // Competencies -- sorted by score descending, capped at 5 for compact.
         $competencies = $data['competencies'] ?? [];
         usort($competencies, fn($a, $b) => ($b['score'] ?? 0) <=> ($a['score'] ?? 0));
         if ($compact) {
@@ -182,10 +210,10 @@ class renderer extends \plugin_renderer_base {
         // Radar axes.
         $radaraxes = $data['radar']['axes'] ?? [];
 
-        // Bloom's progression — ensure all 6 levels present.
+        // Bloom's progression -- ensure all 6 levels present.
         $bloomsprogression = $this->prepare_blooms($data['blooms_progression'] ?? []);
 
-        // ── Schema-branched blocks ────────────────────────────────────────────
+        // -- Schema-branched blocks -------------------------------------------
 
         if ($isv12) {
             $roiblock           = $this->empty_roi_block();
@@ -333,7 +361,7 @@ class renderer extends \plugin_renderer_base {
      *   discussion_value.application_readiness  string  LOW|MEDIUM|HIGH|EXCEPTIONAL
      *   discussion_value.participation_depth    string  LOW|MEDIUM|HIGH  (scalar)
      *   discussion_value.session_hours          float
-     *   discussion_value.discussion_contribution_index  float 0.0–10.0
+     *   discussion_value.discussion_contribution_index  float 0.0-10.0
      *   discussion_value.dci_components         object  {idea_originality, reasoning_transparency,
      *                                                    peer_advancement, critical_challenge,
      *                                                    knowledge_integration}
@@ -363,10 +391,10 @@ class renderer extends \plugin_renderer_base {
         ];
         $depthlevels = ['LOW' => 1, 'MEDIUM' => 2, 'HIGH' => 3];
 
-        // DCI bar — scale 0–10 to 0–100.
+        // DCI bar -- scale 0-10 to 0-100.
         $dcibarwidth = max(0, min(100, (int) round($dci * 10)));
 
-        // Retention indicators — factors_present as array of {factor, evidence}.
+        // Retention indicators -- factors_present as array of {factor, evidence}.
         $factorspresent = [];
         if (is_array($retentionblock['factors_present'] ?? null)) {
             foreach ($retentionblock['factors_present'] as $fp) {
@@ -386,7 +414,7 @@ class renderer extends \plugin_renderer_base {
             }
         }
 
-        // DCI component bars — each 0.0–2.0 scaled to 0–100 bar width.
+        // DCI component bars -- each 0.0-2.0 scaled to 0-100 bar width.
         $dcicomponentrows = [];
         $componentlabels  = [
             'idea_originality'      => 'Idea originality',
@@ -400,7 +428,7 @@ class renderer extends \plugin_renderer_base {
             $dcicomponentrows[] = [
                 'label'     => $label,
                 'score'     => number_format($val, 1),
-                'bar_width' => max(0, min(100, (int) round($val * 50))), // 2.0 max → 100%
+                'bar_width' => max(0, min(100, (int) round($val * 50))), // 2.0 max -> 100%
             ];
         }
 
@@ -554,7 +582,7 @@ class renderer extends \plugin_renderer_base {
         $score = (int) ($cpi['cpi_score'] ?? 70);
         $band  = $cpi['cpi_band'] ?? '';
 
-        // Map score 70–145 to a 0–100 bar width.
+        // Map score 70-145 to a 0-100 bar width.
         $barwidth = (int) round(($score - 70) / 75 * 100);
         $barwidth = max(0, min(100, $barwidth));
 
@@ -634,7 +662,7 @@ class renderer extends \plugin_renderer_base {
     }
 
     /**
-     * Prepare Bloom's progression — ensures all 6 levels present.
+     * Prepare Bloom's progression -- ensures all 6 levels present.
      *
      * @param  array $raw  Raw blooms_progression array from JSON.
      * @return array
@@ -648,12 +676,12 @@ class renderer extends \plugin_renderer_base {
             }
         }
         $bloomdefaults = [
-            1 => ['label' => 'Remember',   'icon' => '📖'],
-            2 => ['label' => 'Understand',  'icon' => '💡'],
-            3 => ['label' => 'Apply',       'icon' => '🔧'],
-            4 => ['label' => 'Analyze',     'icon' => '🔍'],
-            5 => ['label' => 'Evaluate',    'icon' => '⚖️'],
-            6 => ['label' => 'Create',      'icon' => '🏗️'],
+            1 => ['label' => 'Remember',   'icon' => ''],
+            2 => ['label' => 'Understand',  'icon' => ''],
+            3 => ['label' => 'Apply',       'icon' => ''],
+            4 => ['label' => 'Analyze',     'icon' => ''],
+            5 => ['label' => 'Evaluate',    'icon' => ''],
+            6 => ['label' => 'Create',      'icon' => ''],
         ];
         $result = [];
         for ($l = 1; $l <= 6; $l++) {
