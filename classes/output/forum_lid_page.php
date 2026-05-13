@@ -81,6 +81,7 @@ defined('MOODLE_INTERNAL') || die();
  *   owndata_notice         string   - notice shown when peer data is hidden (or '')
  *   trigger_url            string
  *   config_url             string
+ *   use_native_theme       bool     - true if native Moodle theme mode is enabled
  *
  *   Competency variables (v0.6.0):
  *   competency_site_ok     bool     - true if Moodle competency subsystem is enabled
@@ -184,6 +185,9 @@ class forum_lid_page implements \renderable, \templatable {
         // the template always receives all expected keys.
         $competencydata = $this->resolve_competency_context($courseid, $config);
 
+        // Resolve theme mode for conditional template includes.
+        $usenativetheme = (bool) get_config('local_lid', 'lid_use_native_theme');
+
         if (!$lidenabled) {
             return [
                 'forumid'                  => $forumid,
@@ -207,6 +211,7 @@ class forum_lid_page implements \renderable, \templatable {
                 'owndata_notice'           => '',
                 'trigger_url'              => $triggerurl,
                 'config_url'               => $configurl,
+                'use_native_theme'         => $usenativetheme,
                 // Competency keys - safe defaults for disabled forum.
                 'competency_site_ok'       => $competencydata['competency_site_ok'],
                 'competency_enabled'       => $competencydata['competency_enabled'],
@@ -351,6 +356,7 @@ class forum_lid_page implements \renderable, \templatable {
             'owndata_notice'           => $owndatanotice,
             'trigger_url'              => $triggerurl,
             'config_url'               => $configurl,
+            'use_native_theme'         => $usenativetheme,
             // Competency keys (v0.6.0).
             'competency_site_ok'       => $competencydata['competency_site_ok'],
             'competency_enabled'       => $competencydata['competency_enabled'],
