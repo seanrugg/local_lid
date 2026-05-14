@@ -1,0 +1,105 @@
+{{!
+    Minimal styles for native Moodle theme mode.
+
+    Loaded by page-level templates (forum_lid, student_lid, course_lid,
+    prompt_editor, forum_config) when use_native_theme is true, replacing
+    the full lid_styles partial.
+
+    Only includes layout rules that Bootstrap 4 does not provide out of
+    the box: radar canvas sizing, progress bar width animation, CPI badge
+    inline sizing, and Bloom's grid layout.
+
+    All colour and typography defers to the active Moodle theme.
+}}
+<style>
+/* Radar canvas container */
+.lid-native-radar-wrap {
+    display: flex;
+    justify-content: center;
+    padding: 1rem 0;
+}
+.lid-native-radar-wrap canvas {
+    max-width: 280px;
+    max-height: 280px;
+}
+
+/* Bloom's grid -- 6 across on desktop, 3 on mobile */
+.lid-native-blooms-grid {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 0.5rem;
+}
+@media (max-width: 767px) {
+    .lid-native-blooms-grid {
+        grid-template-columns: repeat(3, 1fr);
+    }
+}
+
+/* Bloom's dot indicators */
+.lid-native-bloom-dots {
+    display: flex;
+    gap: 4px;
+    margin-top: 0.25rem;
+}
+.lid-native-bloom-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #dee2e6;
+}
+.lid-native-bloom-dot-active {
+    background: #007bff;
+}
+
+/* Progress bar width animation on load */
+.lid-native-bar-animated {
+    transition: width 0.6s ease-out;
+}
+
+/* CPI inline badge */
+.lid-native-cpi-badge {
+    display: inline-block;
+    font-size: 1.5rem;
+    font-weight: 700;
+    padding: 0.25rem 0.75rem;
+    border-radius: 0.375rem;
+}
+
+/* Two-column main grid */
+.lid-native-main-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+    margin-bottom: 1rem;
+}
+@media (max-width: 767px) {
+    .lid-native-main-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* Timeline two-column flow */
+.lid-native-timeline-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.5rem;
+}
+@media (max-width: 767px) {
+    .lid-native-timeline-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* Score card row */
+.lid-native-score-row {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+}
+@media (max-width: 767px) {
+    .lid-native-score-row {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+</style>

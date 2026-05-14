@@ -1,0 +1,17 @@
+{{!
+    Status badge for a local_lid analysis record -- Bootstrap 4 native variant.
+
+    Selected by renderer::render_status_badge() when lid_use_native_theme is enabled.
+
+    Context:
+        status        string  -- pending | processing | complete | error
+        status_label  string  -- localised label
+        is_pending    bool
+        is_processing bool
+        is_complete   bool
+        is_error      bool
+}}
+{{#is_pending}}<span class="badge badge-secondary" aria-label="{{status_label}}">{{status_label}}</span>{{/is_pending}}
+{{#is_processing}}<span class="badge badge-info" aria-label="{{status_label}}"><span class="spinner-border spinner-border-sm mr-1" role="status" aria-hidden="true"></span>{{status_label}}</span>{{/is_processing}}
+{{#is_complete}}<span class="badge badge-success" aria-label="{{status_label}}">{{status_label}}</span>{{/is_complete}}
+{{#is_error}}<span class="badge badge-danger" aria-label="{{status_label}}">{{status_label}}</span>{{/is_error}}

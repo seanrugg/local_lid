@@ -1,0 +1,386 @@
+{{!
+    Full LID analysis card -- Bootstrap 4 native Moodle theme variant.
+
+    Selected by renderer::render_analysis_card() when lid_use_native_theme
+    is enabled. Renders the same template data as analysis_card.mustache
+    using Bootstrap 4 classes instead of custom LID CSS.
+
+    Layout mirrors the futuristic version:
+      Scores -> CPI -> Bloom's (6 across)
+      2-col grid: Radar + DV stacked (col 1) | Competencies (col 2)
+      Full-width: Timeline (2-col flow)
+      Full-width: Assessment Notes / Instructor Notes
+      Meta footer
+}}
+<div class="card mb-3{{#compact}} card-sm{{/compact}}" data-schema="{{schema_version}}">
+
+    {{! -- Session header -------------------------------------------------- }}
+    <div class="card-header">
+        <div class="d-flex align-items-center flex-wrap mb-1">
+            <small class="text-muted mr-2">{{session_date}}</small>
+            <small class="text-muted mr-2">{{session_source}}</small>
+            <span class="badge badge-light">{{session_source_type}}</span>
+        </div>
+        <h5 class="card-title mb-1">{{session_title}}</h5>
+        <p class="text-muted small mb-2">{{session_summary}}</p>
+        <div class="d-flex align-items-center flex-wrap">
+            <small class="text-muted mr-2">~{{session_duration}} min</small>
+            {{#session_tags}}
+                <span class="badge badge-info mr-1">{{tag}}</span>
+            {{/session_tags}}
+        </div>
+    </div>
+
+    <div class="card-body">
+
+        {{! -- Score cards ------------------------------------------------- }}
+        <div class="lid-native-score-row">
+            <div class="card text-center border">
+                <div class="card-body p-2">
+                    <div class="text-muted small">{{#str}}dashboard_competencies, local_lid{{/str}}</div>
+                    <div class="h4 mb-0 text-primary">{{domains_count}}</div>
+                    <div class="text-muted" style="font-size:0.7rem">Distinct professional domains</div>
+                </div>
+            </div>
+            <div class="card text-center border">
+                <div class="card-body p-2">
+                    <div class="text-muted small">Cognitive depth</div>
+                    <div class="h4 mb-0 text-info">{{cognitive_depth}}</div>
+                    <div class="text-muted" style="font-size:0.7rem">Analysis, synthesis &amp; meta-cognition</div>
+                </div>
+            </div>
+            <div class="card text-center border">
+                <div class="card-body p-2">
+                    <div class="text-muted small">Strategic thinking</div>
+                    <div class="h4 mb-0 text-success">{{strategic_thinking}}%</div>
+                    <div class="text-muted" style="font-size:0.7rem">Systems-level problem framing</div>
+                </div>
+            </div>
+            <div class="card text-center border">
+                <div class="card-body p-2">
+                    <div class="text-muted small">Meta-cognition</div>
+                    <div class="h4 mb-0 text-warning">{{meta_cognition}}</div>
+                    <div class="text-muted" style="font-size:0.7rem">Self-awareness of learning process</div>
+                </div>
+            </div>
+        </div>
+
+        {{! -- Cognitive Performance Index panel --------------------------- }}
+        {{#has_cpi}}
+        <div class="card mb-3">
+            <div class="card-body">
+                <h6 class="card-title">Cognitive Performance Index</h6>
+                <div class="d-flex align-items-center mb-2">
+                    <span class="lid-native-cpi-badge badge badge-{{#cpi_is_exceptional}}info{{/cpi_is_exceptional}}{{#cpi_is_advanced}}primary{{/cpi_is_advanced}}{{#cpi_is_proficient}}info{{/cpi_is_proficient}}{{#cpi_is_developing}}warning{{/cpi_is_developing}}{{#cpi_is_foundational}}secondary{{/cpi_is_foundational}} mr-2">{{cpi_score}}</span>
+                    <span class="badge badge-{{#cpi_is_exceptional}}info{{/cpi_is_exceptional}}{{#cpi_is_advanced}}primary{{/cpi_is_advanced}}{{#cpi_is_proficient}}info{{/cpi_is_proficient}}{{#cpi_is_developing}}warning{{/cpi_is_developing}}{{#cpi_is_foundational}}secondary{{/cpi_is_foundational}}">{{cpi_band}}</span>
+                </div>
+                <div class="progress mb-2" style="height:8px">
+                    <div class="progress-bar lid-native-bar-animated bg-{{#cpi_is_exceptional}}info{{/cpi_is_exceptional}}{{#cpi_is_advanced}}primary{{/cpi_is_advanced}}{{#cpi_is_proficient}}info{{/cpi_is_proficient}}{{#cpi_is_developing}}warning{{/cpi_is_developing}}{{#cpi_is_foundational}}secondary{{/cpi_is_foundational}}"
+                         role="progressbar"
+                         style="width:0"
+                         data-width="{{cpi_bar_width}}"
+                         aria-valuenow="{{cpi_bar_width}}" aria-valuemin="0" aria-valuemax="100">
+                    </div>
+                </div>
+                <p class="text-muted small mb-2">{{cpi_band_description}}</p>
+                {{#has_cpi_components}}
+                <div class="mt-2">
+                    {{#cpi_components}}
+                    <div class="mb-1">
+                        <div class="d-flex justify-content-between">
+                            <small>{{label}}</small>
+                            <small class="text-muted">{{weight_pct}}% weight &middot; {{score}} &rarr; {{contribution}} pts</small>
+                        </div>
+                        <div class="progress" style="height:4px">
+                            <div class="progress-bar lid-native-bar-animated bg-info"
+                                 role="progressbar"
+                                 style="width:0"
+                                 data-width="{{bar_width}}"
+                                 aria-valuenow="{{bar_width}}" aria-valuemin="0" aria-valuemax="100">
+                            </div>
+                        </div>
+                    </div>
+                    {{/cpi_components}}
+                </div>
+                {{/has_cpi_components}}
+                <small class="text-muted d-block mt-2 border-top pt-2">{{cpi_calculation_note}}</small>
+            </div>
+        </div>
+        {{/has_cpi}}
+
+        {{! -- Bloom's taxonomy grid --------------------------------------- }}
+        <div class="card mb-3">
+            <div class="card-body">
+                <h6 class="card-title">{{#str}}dashboard_blooms, local_lid{{/str}}</h6>
+                <div class="lid-native-blooms-grid">
+                    {{#blooms_progression}}
+                    <div class="p-2 border rounded text-center {{^is_active}}bg-light text-muted{{/is_active}}">
+                        <div class="small font-weight-bold">0{{level}}</div>
+                        {{#icon}}<div>{{icon}}</div>{{/icon}}
+                        <div class="small font-weight-bold">{{title}}</div>
+                        <div style="font-size:0.65rem" class="text-muted">{{description}}</div>
+                        <div class="lid-native-bloom-dots justify-content-center mt-1">
+                            <span class="lid-native-bloom-dot{{#dot1}} lid-native-bloom-dot-active{{/dot1}}"></span>
+                            <span class="lid-native-bloom-dot{{#dot2}} lid-native-bloom-dot-active{{/dot2}}"></span>
+                            <span class="lid-native-bloom-dot{{#dot3}} lid-native-bloom-dot-active{{/dot3}}"></span>
+                            <span class="lid-native-bloom-dot{{#dot4}} lid-native-bloom-dot-active{{/dot4}}"></span>
+                            <span class="lid-native-bloom-dot{{#dot5}} lid-native-bloom-dot-active{{/dot5}}"></span>
+                        </div>
+                    </div>
+                    {{/blooms_progression}}
+                </div>
+            </div>
+        </div>
+
+        {{! ================================================================ }}
+        {{! -- MAIN CONTENT -- 2-col layout -------------------------------- }}
+        {{! Col 1: Radar + DV stacked  |  Col 2: Competencies              }}
+        {{! Timeline: full-width below                                      }}
+        {{! ================================================================ }}
+
+        <div class="lid-native-main-grid">
+
+            {{! -- Col 1: Radar + DV/ROI stacked --------------------------- }}
+            <div>
+
+                {{! Radar chart }}
+                {{#has_radar}}
+                <div class="card mb-3">
+                    <div class="card-body">
+                        <h6 class="card-title">{{#str}}dashboard_radar, local_lid{{/str}}</h6>
+                        <div class="lid-native-radar-wrap">
+                            <canvas class="lid-radar-canvas"
+                                    data-axes="{{radar_axes_json}}"
+                                    width="280" height="280"
+                                    aria-label="Competency radar chart">
+                            </canvas>
+                        </div>
+                    </div>
+                </div>
+                {{/has_radar}}
+
+                {{! Discussion value (v1.2) }}
+                {{#has_discussion_value}}
+                <div class="card mb-3">
+                    <div class="card-body">
+                        <h6 class="card-title">{{#str}}dashboard_discussion_value, local_lid{{/str}}</h6>
+
+                        {{#has_dci}}
+                        <div class="mb-3">
+                            <small class="text-muted">{{#str}}dashboard_dci, local_lid{{/str}}</small>
+                            <div class="h4 mb-1">{{dci}}</div>
+                            <div class="progress" style="height:6px">
+                                <div class="progress-bar lid-native-bar-animated bg-info"
+                                     role="progressbar"
+                                     style="width:0"
+                                     data-width="{{dci_bar_width}}"
+                                     aria-valuenow="{{dci_bar_width}}" aria-valuemin="0" aria-valuemax="100">
+                                </div>
+                            </div>
+                        </div>
+                        {{/has_dci}}
+
+                        <div class="mb-3">
+                            <small class="text-muted">Participation depth</small>
+                            <div class="h5 mb-0">
+                                <span class="badge badge-{{participation_depth_color}}">{{participation_depth}}</span>
+                            </div>
+                            {{#dv_session_hours}}
+                            <small class="text-muted">{{dv_session_hours}} hrs</small>
+                            {{/dv_session_hours}}
+                        </div>
+
+                        {{#has_dci_components}}
+                        <div class="mt-2">
+                            {{#dci_components}}
+                            <div class="d-flex justify-content-between mb-1">
+                                <small>{{label}}</small>
+                                <small class="text-muted">{{score}}</small>
+                            </div>
+                            {{/dci_components}}
+                        </div>
+                        {{/has_dci_components}}
+                    </div>
+                </div>
+                {{/has_discussion_value}}
+
+                {{! ROI (v1.0/v1.1) }}
+                {{#has_roi}}
+                <div class="card mb-3">
+                    <div class="card-body">
+                        <h6 class="card-title">{{#str}}dashboard_roi, local_lid{{/str}}</h6>
+                        <div class="row text-center">
+                            <div class="col-4 mb-2">
+                                <small class="text-muted d-block">Est. knowledge value</small>
+                                <strong>${{{knowledge_value}}}</strong>
+                            </div>
+                            <div class="col-4 mb-2">
+                                <small class="text-muted d-block">Time efficiency</small>
+                                <strong>{{efficiency_mult}}&times;</strong>
+                                <div style="font-size:0.65rem" class="text-muted">~{{lms_hours}}hrs vs {{session_hours}}hrs</div>
+                            </div>
+                            <div class="col-4 mb-2">
+                                <small class="text-muted d-block">Engagement</small>
+                                <strong>{{engagement_score}}%</strong>
+                            </div>
+                            <div class="col-4 mb-2">
+                                <small class="text-muted d-block">Retention</small>
+                                <strong>{{retention_pct}}%</strong>
+                            </div>
+                            <div class="col-4 mb-2">
+                                <small class="text-muted d-block">Readiness</small>
+                                <span class="badge badge-{{readiness_color}}">{{application_readiness}}</span>
+                            </div>
+                            <div class="col-4 mb-2">
+                                <small class="text-muted d-block">EVI</small>
+                                <strong>{{employer_value_index}}/10</strong>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                {{/has_roi}}
+
+            </div>{{! end col 1 }}
+
+            {{! -- Col 2: Competencies ------------------------------------- }}
+            <div class="card mb-3">
+                <div class="card-body">
+                    <h6 class="card-title">{{#str}}dashboard_competencies, local_lid{{/str}}</h6>
+                    {{#competencies}}
+                    <div class="mb-3">
+                        <div class="d-flex justify-content-between mb-1">
+                            <span class="font-weight-bold small">{{name}}</span>
+                            <span class="text-muted small">{{score}}%</span>
+                        </div>
+                        <div class="progress" style="height:6px">
+                            <div class="progress-bar lid-native-bar-animated bg-info"
+                                 role="progressbar"
+                                 style="width:0"
+                                 data-width="{{bar_width}}"
+                                 aria-valuenow="{{bar_width}}" aria-valuemin="0" aria-valuemax="100">
+                            </div>
+                        </div>
+                        <small class="text-muted">
+                            {{#has_frameworks}}
+                                {{#frameworks}}{{tag}} &middot; {{/frameworks}}
+                            {{/has_frameworks}}
+                            Bloom's L{{bloom_level}} &mdash; {{bloom_label}}
+                        </small>
+                    </div>
+                    {{/competencies}}
+                    {{^competencies}}
+                    <p class="text-muted small">
+                        {{#str}}dashboard_nodata, local_lid{{/str}}
+                    </p>
+                    {{/competencies}}
+                </div>
+            </div>
+
+            {{! -- Timeline (full-width below the 2-col row) --------------- }}
+            {{#show_timeline}}
+            {{#has_timeline}}
+            <div class="card mb-3" style="grid-column:1/-1">
+                <div class="card-body">
+                    <h6 class="card-title">{{#str}}dashboard_timeline, local_lid{{/str}}</h6>
+                    <div class="lid-native-timeline-grid">
+                        {{#timeline}}
+                        <div class="border-left pl-3 mb-2" style="border-width:2px!important">
+                            <div class="font-weight-bold small">{{title}}</div>
+                            <div class="text-muted small">{{description}}</div>
+                        </div>
+                        {{/timeline}}
+                    </div>
+                </div>
+            </div>
+            {{/has_timeline}}
+            {{/show_timeline}}
+
+        </div>{{! end .lid-native-main-grid }}
+
+        {{! -- Bottom row -- Assessment / Instructor notes ----------------- }}
+
+        {{! Employer value (v1.0 / v1.1 only) }}
+        {{#has_employer_value}}
+        <div class="card mb-3">
+            <div class="card-body">
+                <h6 class="card-title">{{#str}}dashboard_employer_value, local_lid{{/str}}</h6>
+                {{#employer_value}}
+                <div class="d-flex align-items-start mb-2">
+                    <span class="mr-2">{{icon}}</span>
+                    <div>
+                        <strong class="small">{{title}}</strong>
+                        <div class="text-muted small">{{description}}</div>
+                    </div>
+                </div>
+                {{/employer_value}}
+            </div>
+        </div>
+        {{/has_employer_value}}
+
+        {{! Instructor notes (v1.2 only) }}
+        {{#has_instructor_notes_content}}
+        <div class="card mb-3">
+            <div class="card-body">
+                <h6 class="card-title">{{#str}}dashboard_instructor_notes, local_lid{{/str}}</h6>
+                {{#instructor_participation_summary}}
+                <p class="small mb-2">
+                    <strong>Participation summary:</strong> {{instructor_participation_summary}}
+                </p>
+                {{/instructor_participation_summary}}
+                {{#instructor_has_standout_moments}}
+                <div class="mb-2">
+                    <div class="small font-weight-bold mb-1">Standout moments:</div>
+                    {{#instructor_standout_moments}}
+                    <div class="small text-muted border-bottom py-1">
+                        {{#is_strength}}<span class="text-success font-weight-bold">+</span>{{/is_strength}}
+                        {{#is_growth}}<span class="text-warning font-weight-bold">&uarr;</span>{{/is_growth}}
+                        {{observation}}
+                    </div>
+                    {{/instructor_standout_moments}}
+                </div>
+                {{/instructor_has_standout_moments}}
+                {{#instructor_growth_indicators}}
+                <p class="small mb-2">
+                    <strong>Growth indicators:</strong> {{instructor_growth_indicators}}
+                </p>
+                {{/instructor_growth_indicators}}
+                {{#instructor_constructive_feedback}}
+                <p class="small mb-0">
+                    <strong>Constructive feedback:</strong> {{instructor_constructive_feedback}}
+                </p>
+                {{/instructor_constructive_feedback}}
+            </div>
+        </div>
+        {{/has_instructor_notes_content}}
+
+        {{! Portfolio (v1.0 / v1.1 only) }}
+        {{#show_portfolio}}
+        {{#has_portfolio}}
+        <div class="card mb-3">
+            <div class="card-body">
+                <h6 class="card-title">{{#str}}dashboard_portfolio, local_lid{{/str}}</h6>
+                <div class="font-weight-bold">{{portfolio_title}}</div>
+                <div class="text-muted small mb-2">{{portfolio_subtitle}}</div>
+                <div class="mb-2">
+                    {{#portfolio_tags}}
+                    <span class="badge badge-info mr-1">{{tag}}</span>
+                    {{/portfolio_tags}}
+                </div>
+                {{#portfolio_formats}}
+                <span class="badge badge-{{color}} mr-1">{{label}}</span>
+                {{/portfolio_formats}}
+            </div>
+        </div>
+        {{/has_portfolio}}
+        {{/show_portfolio}}
+
+        {{! -- Meta footer ------------------------------------------------- }}
+        {{#has_meta_notes}}
+        <div class="alert alert-light small mb-0 py-1 px-2">
+            {{meta_notes}}
+        </div>
+        {{/has_meta_notes}}
+
+    </div>{{! end .card-body }}
+
+</div>{{! end .card }}
