@@ -25,7 +25,7 @@
 defined('MOODLE_INTERNAL') || die();
 
 $plugin->component = 'local_lid';
-$plugin->version   = 2026042200;  // YYYYMMDDNN - April 22, 2026
-$plugin->release   = '0.8.0';     // Thread scope deprecated
+$plugin->version   = 2026051400;  // YYYYMMDDNN - May 14, 2026
+$plugin->release   = '0.9.0';     // Native Moodle theme toggle
 $plugin->requires  = 2024042200;  // Moodle 5.0
 $plugin->maturity  = MATURITY_STABLE;
