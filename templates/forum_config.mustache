@@ -1,31 +1,37 @@
 {{!
     Forum LID configuration panel.
 
-    Rendered into the forum settings area — either injected into
+    Rendered into the forum settings area -- either injected into
     mod_edit.php via a settings callback or shown on a dedicated
     forum settings tab.
 
     Context fields:
         forumid              int
         courseid             int
-        enabled              bool     — current LID state for this forum
-        has_data             bool     — true if analyses exist for this forum
-        ajax_url             string   — ajax.php endpoint
-        prompt_locked        bool     — site admin has locked the prompt
-        can_edit_prompt      bool     — user has local/lid:editprompt
-        prompt_value         string   — current active prompt text for this forum
-        has_prompt_override  bool     — forum has its own prompt (not inherited)
-        inherited_from       string   — 'course' | 'site' (where prompt comes from)
-        discussion_model     string   — current model: independent_first | open_engagement | structured_debate
-        discussion_models    array    — [{value, label, description, selected}] for selector
-        competency_enabled   bool     — true if course-level competencies are enabled
-        competency_site_ok   bool     — true if Moodle competency subsystem is enabled
-        competency_mode      string   — 'inherit' | 'exclude' | 'specific'
-        competency_ids_json  string   — JSON array of selected competency IDs (or '[]')
-        course_competencies  array    — [{id, shortname, description, selected}] for multi-select
-        has_competencies     bool     — true if course has linked competencies
+        enabled              bool     -- current LID state for this forum
+        has_data             bool     -- true if analyses exist for this forum
+        ajax_url             string   -- ajax.php endpoint
+        prompt_locked        bool     -- site admin has locked the prompt
+        can_edit_prompt      bool     -- user has local/lid:editprompt
+        prompt_value         string   -- current active prompt text for this forum
+        has_prompt_override  bool     -- forum has its own prompt (not inherited)
+        inherited_from       string   -- 'course' | 'site' (where prompt comes from)
+        discussion_model     string   -- current model: independent_first | open_engagement | structured_debate
+        discussion_models    array    -- [{value, label, description, selected}] for selector
+        competency_enabled   bool     -- true if course-level competencies are enabled
+        competency_site_ok   bool     -- true if Moodle competency subsystem is enabled
+        competency_mode      string   -- 'inherit' | 'exclude' | 'specific'
+        competency_ids_json  string   -- JSON array of selected competency IDs (or '[]')
+        course_competencies  array    -- [{id, shortname, description, selected}] for multi-select
+        has_competencies     bool     -- true if course has linked competencies
+        use_native_theme     bool     -- true if native Moodle theme mode is enabled
 }}
-{{> local_lid/lid_styles}}
+{{#use_native_theme}}
+    {{> local_lid/lid_styles_native}}
+{{/use_native_theme}}
+{{^use_native_theme}}
+    {{> local_lid/lid_styles}}
+{{/use_native_theme}}
 
 <div class="lid-forum-config"
      data-forumid="{{forumid}}"
@@ -38,12 +44,12 @@
      data-url="{{ajax_url}}"
      style="max-width:800px">
 
-    {{! ── Section heading ─────────────────────────────────────────────── }}
+    {{! -- Section heading ------------------------------------------------- }}
     <div class="lid-panel-title" style="margin-bottom:16px">
         {{#str}}forum_config_heading, local_lid{{/str}}
     </div>
 
-    {{! ── Enable/disable toggle ───────────────────────────────────────── }}
+    {{! -- Enable/disable toggle ------------------------------------------- }}
     <div style="display:flex;align-items:flex-start;gap:14px;margin-bottom:16px;
                 padding:16px;background:var(--lid-surface);border:1px solid var(--lid-border);
                 border-radius:var(--lid-radius)">
@@ -86,7 +92,7 @@
         <div class="lid-forum-config-status" style="flex-shrink:0;padding-top:4px"></div>
     </div>
 
-    {{! ── Discussion model selector ───────────────────────────────────── }}
+    {{! -- Discussion model selector --------------------------------------- }}
     {{! Only shown when LID is enabled. Hidden via lid-forum-model-section class. }}
     <div class="lid-forum-model-section{{^enabled}} lid-forum-prompt-hidden{{/enabled}}"
          style="margin-bottom:16px;padding:16px;background:var(--lid-surface);
@@ -144,7 +150,7 @@
 
         </div>
 
-        {{! Save model button — saves independently of the enable toggle }}
+        {{! Save model button -- saves independently of the enable toggle }}
         <div style="margin-top:12px;display:flex;align-items:center;gap:10px">
             <button class="lid-btn lid-btn-primary lid-model-save-btn"
                     style="font-size:10px">
@@ -156,7 +162,7 @@
 
     </div>
 
-    {{! ── Competency selector ─────────────────────────────────────────── }}
+    {{! -- Competency selector --------------------------------------------- }}
     {{! Only shown when LID is enabled AND course competencies feature is active. }}
     {{#competency_site_ok}}
     <div class="lid-forum-competency-section{{^enabled}} lid-forum-prompt-hidden{{/enabled}}"
@@ -223,7 +229,7 @@
             </label>
         </div>
 
-        {{! Competency checklist — only visible when mode = specific }}
+        {{! Competency checklist -- only visible when mode = specific }}
         <div class="lid-competency-checklist{{^competency_mode_specific}} lid-forum-prompt-hidden{{/competency_mode_specific}}"
              style="margin-bottom:12px;padding:10px 14px;
                     background:var(--lid-surface2);border:1px solid var(--lid-border);
@@ -241,7 +247,7 @@
                     <strong>{{shortname}}</strong>
                     {{#description}}
                     <span class="lid-mono" style="font-size:10px;color:var(--lid-muted)">
-                        — {{description}}
+                        -- {{description}}
                     </span>
                     {{/description}}
                 </span>
@@ -265,7 +271,7 @@
     </div>
     {{/competency_site_ok}}
 
-    {{! ── Prompt override section ─────────────────────────────────────── }}
+    {{! -- Prompt override section ----------------------------------------- }}
     {{#can_edit_prompt}}
     <div class="lid-forum-prompt-section{{^enabled}} lid-forum-prompt-hidden{{/enabled}}"
          style="margin-top:4px">
@@ -292,7 +298,7 @@
                 {{#str}}forum_config_prompt_desc, local_lid{{/str}}
             </p>
 
-            {{! The prompt_editor partial is loaded here — it provides
+            {{! The prompt_editor partial is loaded here -- it provides
                 the textarea, file upload, save, and reset controls. }}
             <div class="lid-prompt-editor" data-courseid="{{courseid}}" data-locked="0">
                 <textarea id="lid-prompt-textarea"
@@ -308,14 +314,14 @@
     </div>
     {{/can_edit_prompt}}
 
-    {{! ── Locked notice ───────────────────────────────────────────────── }}
+    {{! -- Locked notice --------------------------------------------------- }}
     {{#prompt_locked}}
     <div class="lid-notice lid-notice-info" style="margin-top:4px">
         {{#str}}prompt_locked_notice, local_lid{{/str}}
     </div>
     {{/prompt_locked}}
 
-    {{! ── No-permission read-only prompt view ─────────────────────────── }}
+    {{! -- No-permission read-only prompt view ----------------------------- }}
     {{^can_edit_prompt}}
     {{^prompt_locked}}
     {{#enabled}}

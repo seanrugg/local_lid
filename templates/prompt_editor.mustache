@@ -6,13 +6,19 @@
 
     Context fields:
         courseid           int
-        prompt_value       string   — current active prompt text
-        prompt_locked      bool     — site admin has locked the prompt
-        has_course_override bool    — course has its own prompt (not inherited)
-        can_edit_prompt    bool     — user has local/lid:editprompt capability
-        ajax_url           string   — ajax.php endpoint
+        prompt_value       string   -- current active prompt text
+        prompt_locked      bool     -- site admin has locked the prompt
+        has_course_override bool    -- course has its own prompt (not inherited)
+        can_edit_prompt    bool     -- user has local/lid:editprompt capability
+        ajax_url           string   -- ajax.php endpoint
+        use_native_theme   bool     -- true if native Moodle theme mode is enabled
 }}
-{{> local_lid/lid_styles}}
+{{#use_native_theme}}
+    {{> local_lid/lid_styles_native}}
+{{/use_native_theme}}
+{{^use_native_theme}}
+    {{> local_lid/lid_styles}}
+{{/use_native_theme}}
 
 <div style="max-width:900px">
 
@@ -20,14 +26,14 @@
         {{#str}}settings_heading_prompt, local_lid{{/str}}
     </div>
 
-    {{! ── Locked notice ───────────────────────────────────────────────── }}
+    {{! -- Locked notice --------------------------------------------------- }}
     {{#prompt_locked}}
     <div class="lid-notice lid-notice-warn" style="margin-bottom:16px">
         {{#str}}prompt_locked_notice, local_lid{{/str}}
     </div>
     {{/prompt_locked}}
 
-    {{! ── Editable prompt editor ──────────────────────────────────────── }}
+    {{! -- Editable prompt editor ------------------------------------------ }}
     {{#can_edit_prompt}}
     <div class="lid-prompt-editor"
          data-courseid="{{courseid}}"
@@ -109,7 +115,7 @@
     </div>
     {{/can_edit_prompt}}
 
-    {{! ── Read-only view (no capability) ─────────────────────────────── }}
+    {{! -- Read-only view (no capability) ---------------------------------- }}
     {{^can_edit_prompt}}
     <pre style="background:var(--lid-surface2);border:1px solid var(--lid-border);
                 border-radius:4px;padding:14px;font-family:'DM Mono',monospace;

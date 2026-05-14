@@ -1,14 +1,21 @@
 {{!
-    Forum LID tab page.
-    Context: see classes/output/forum_lid_page.php::export_for_template()
+    Student LID tab page.
+    Context: see classes/output/student_lid_page.php::export_for_template()
     All analysis cards and status badges arrive as pre-rendered HTML.
     Output with triple brackets to avoid escaping.
+
+    use_native_theme     bool     -- true if native Moodle theme mode is enabled
 }}
-{{> local_lid/lid_styles}}
+{{#use_native_theme}}
+    {{> local_lid/lid_styles_native}}
+{{/use_native_theme}}
+{{^use_native_theme}}
+    {{> local_lid/lid_styles}}
+{{/use_native_theme}}
 
 <div class="lid-page lid-page-student">
 
-    {{! ── Page header ─────────────────────────────────────────────────── }}
+    {{! -- Page header ----------------------------------------------------- }}
     <div class="lid-page-header">
         <div class="lid-page-header-left" style="display:flex;align-items:center;gap:14px">
             {{{userpic}}}
@@ -17,7 +24,7 @@
                 <div class="lid-mono lid-muted" style="font-size:10px;margin-top:3px">
                     {{coursename}}
                     {{#last_updated}}
-                    <span class="lid-sep">·</span>
+                    <span class="lid-sep">&middot;</span>
                     {{#str}}dashboard_last_updated, local_lid, {{last_updated}}{{/str}}
                     {{/last_updated}}
                 </div>
@@ -25,17 +32,17 @@
         </div>
     </div>
 
-    {{! ── Notices ─────────────────────────────────────────────────────── }}
+    {{! -- Notices --------------------------------------------------------- }}
     {{#stale_notice}}
     <div class="lid-notice lid-notice-warn">
         {{#str}}dashboard_stale_notice, local_lid{{/str}}
     </div>
     {{/stale_notice}}
 
-    {{! ── No data empty state ─────────────────────────────────────────── }}
+    {{! -- No data empty state --------------------------------------------- }}
     {{^has_data}}
     <div class="lid-empty-state">
-        <div class="lid-empty-icon">📊</div>
+        <div class="lid-empty-icon">&#x1F4CA;</div>
         <div class="lid-empty-title">No data yet</div>
         <div class="lid-empty-desc">{{nodata_notice}}</div>
     </div>
@@ -43,7 +50,7 @@
 
     {{#has_data}}
 
-    {{! ── View tabs ───────────────────────────────────────────────────── }}
+    {{! -- View tabs -------------------------------------------------------- }}
     <div class="lid-forum-tabs" id="lid-student-tabs" role="tablist">
         <button class="lid-forum-tab lid-forum-tab-active"
                 role="tab" aria-selected="true"
@@ -62,7 +69,7 @@
         {{/forums}}
     </div>
 
-    {{! ── Cross-forum aggregate panel ───────────────────────────────── }}
+    {{! -- Cross-forum aggregate panel ------------------------------------- }}
     <div class="lid-tab-panel" id="lid-student-aggregate" role="tabpanel">
         {{#has_aggregate}}
         {{{aggregate_html}}}
@@ -74,7 +81,7 @@
         {{/has_aggregate}}
     </div>
 
-    {{! ── Per-forum panels ───────────────────────────────────────────── }}
+    {{! -- Per-forum panels ------------------------------------------------ }}
     {{#forums}}
     <div class="lid-tab-panel lid-tab-panel-hidden"
          id="lid-student-forum-{{forumid}}"
@@ -88,7 +95,7 @@
                 {{/pending_count}}
             </div>
             <a href="{{forum_url}}" class="lid-btn lid-btn-secondary" style="font-size:10px">
-                {{#str}}nav_forumdashboard, local_lid{{/str}} →
+                {{#str}}nav_forumdashboard, local_lid{{/str}} &rarr;
             </a>
         </div>
 
@@ -108,7 +115,7 @@
                     aria-expanded="false"
                     aria-controls="lid-student-posts-{{forumid}}"
                     data-target="lid-student-posts-{{forumid}}">
-                ▼ {{#str}}dashboard_student_viewpost, local_lid{{/str}} ({{post_count}})
+                &#x25BC; {{#str}}dashboard_student_viewpost, local_lid{{/str}} ({{post_count}})
             </button>
             <div class="lid-student-posts lid-student-posts-hidden"
                  id="lid-student-posts-{{forumid}}">

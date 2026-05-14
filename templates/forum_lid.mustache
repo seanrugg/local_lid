@@ -13,51 +13,57 @@
         disabled_notice      string
         can_trigger          bool
         trigger_url          string
-        analysis_pending     bool     — true if a batch is currently queued/processing
-        stale_notice         bool     — true if any student has posted since last run
+        analysis_pending     bool     -- true if a batch is currently queued/processing
+        stale_notice         bool     -- true if any student has posted since last run
         has_aggregate        bool
-        aggregate_html       string   — pre-rendered forum aggregate card HTML
-        last_updated         string   — human-readable datetime or ''
-        discussion_model_label string — human-readable label for the active model
+        aggregate_html       string   -- pre-rendered forum aggregate card HTML
+        last_updated         string   -- human-readable datetime or ''
+        discussion_model_label string -- human-readable label for the active model
+        use_native_theme     bool     -- true if native Moodle theme mode is enabled
         students             array
           userid             int
           fullname           string
-          userpic            string   — HTML img tag
+          userpic            string   -- HTML img tag
           student_url        string
-          post_count         int      — total posts in this forum
+          post_count         int      -- total posts in this forum
           pending_count      int
           error_count        int
-          is_stale           bool     — student has new posts since last analysis
-          is_pending         bool     — student analysis in queue
-          cpi_score          int|''   — CPI integer 70–145, or '' if no analysis
-          cpi_band           string   — 'developing'|'progressing'|'performing'|'advanced'|''
+          is_stale           bool     -- student has new posts since last analysis
+          is_pending         bool     -- student analysis in queue
+          cpi_score          int|''   -- CPI integer 70-145, or '' if no analysis
+          cpi_band           string   -- 'developing'|'progressing'|'performing'|'advanced'|''
           top_bloom          int|0
           top_bloom_label    string
           has_student_lid    bool
-          student_html       string   — pre-rendered student_forum card HTML
+          student_html       string   -- pre-rendered student_forum card HTML
           threads            array
             thread_id        int
             thread_name      string
-            thread_html      string   — pre-rendered thread card HTML (or '')
+            thread_html      string   -- pre-rendered thread card HTML (or '')
             has_analysis     bool
-            status_html      string   — pre-rendered status badge HTML
+            status_html      string   -- pre-rendered status badge HTML
 }}
-{{> local_lid/lid_styles}}
+{{#use_native_theme}}
+    {{> local_lid/lid_styles_native}}
+{{/use_native_theme}}
+{{^use_native_theme}}
+    {{> local_lid/lid_styles}}
+{{/use_native_theme}}
 
 <div class="lid-page lid-page-forum">
 
-    {{! ── Page header ─────────────────────────────────────────────────── }}
+    {{! -- Page header ----------------------------------------------------- }}
     <div class="lid-page-header">
         <div class="lid-page-header-left">
             <h2 class="lid-heading">{{#str}}dashboard_forum_title, local_lid{{/str}}</h2>
             <div class="lid-mono lid-muted" style="font-size:10px;margin-top:4px">
                 {{forumname}}
                 {{#discussion_model_label}}
-                <span class="lid-sep">·</span>
+                <span class="lid-sep">&middot;</span>
                 {{#str}}dashboard_forum_discussion_model, local_lid, {{discussion_model_label}}{{/str}}
                 {{/discussion_model_label}}
                 {{#last_updated}}
-                <span class="lid-sep">·</span>
+                <span class="lid-sep">&middot;</span>
                 {{#str}}dashboard_last_updated, local_lid, {{last_updated}}{{/str}}
                 {{/last_updated}}
             </div>
@@ -74,7 +80,7 @@
         </div>
     </div>
 
-    {{! ── LID timing guidance notice ─────────────────────────────────── }}
+    {{! -- LID timing guidance notice -------------------------------------- }}
     {{#can_trigger}}
     <div class="lid-notice lid-notice-info"
          style="margin-bottom:12px;font-size:10px;line-height:1.6;
@@ -84,7 +90,7 @@
     </div>
     {{/can_trigger}}
 
-    {{! ── Notices ─────────────────────────────────────────────────────── }}
+    {{! -- Notices --------------------------------------------------------- }}
     {{^lid_enabled}}
     <div class="lid-notice lid-notice-warn">{{disabled_notice}}</div>
     {{/lid_enabled}}
@@ -103,7 +109,7 @@
 
     {{#lid_enabled}}
 
-    {{! ── View tabs: aggregate + one per learner ─────────────────────── }}
+    {{! -- View tabs: aggregate + one per learner -------------------------- }}
     <div class="lid-forum-tabs" id="lid-forum-tabs" role="tablist">
         <button class="lid-forum-tab lid-forum-tab-active"
                 role="tab" aria-selected="true"
@@ -116,19 +122,19 @@
                 role="tab" aria-selected="false"
                 aria-controls="lid-learner-panel-{{userid}}"
                 data-target="lid-learner-panel-{{userid}}"
-                title="{{fullname}} · {{post_count}} posts{{#cpi_score}} · CPI {{cpi_score}}{{/cpi_score}}">
+                title="{{fullname}} &middot; {{post_count}} posts{{#cpi_score}} &middot; CPI {{cpi_score}}{{/cpi_score}}">
             <span class="lid-tab-learner-name">{{fullname}}</span>
             {{#cpi_score}}
             <span class="lid-tab-cpi lid-tab-cpi-{{cpi_band}}">{{cpi_score}}</span>
             {{/cpi_score}}
             {{^cpi_score}}
-            <span class="lid-tab-cpi lid-tab-cpi-none">–</span>
+            <span class="lid-tab-cpi lid-tab-cpi-none">-</span>
             {{/cpi_score}}
         </button>
         {{/students}}
     </div>
 
-    {{! ── Forum aggregate panel ──────────────────────────────────────── }}
+    {{! -- Forum aggregate panel ------------------------------------------- }}
     <div class="lid-tab-panel" id="lid-forum-aggregate" role="tabpanel">
         {{#has_aggregate}}
         {{{aggregate_html}}}
@@ -140,7 +146,7 @@
         {{/has_aggregate}}
     </div>
 
-    {{! ── Per-learner panels (one per student, hidden by default) ──── }}
+    {{! -- Per-learner panels (one per student, hidden by default) --------- }}
     {{#students}}
     <div class="lid-tab-panel lid-tab-panel-hidden" id="lid-learner-panel-{{userid}}" role="tabpanel">
 
@@ -171,7 +177,7 @@
                         {{#pending_count}}<span class="lid-count-badge lid-count-pending">{{pending_count}} pending</span>{{/pending_count}}
                         {{#error_count}}<span class="lid-count-badge lid-count-error">{{error_count}} error</span>{{/error_count}}
                         {{#cpi_score}}<span class="lid-score-inline">CPI {{cpi_score}}<span class="lid-mono" style="font-size:9px;color:var(--lid-muted);margin-left:3px">{{cpi_band}}</span></span>{{/cpi_score}}
-                        {{#top_bloom}}<span class="lid-bloom-badge">Bloom's L{{top_bloom}} — {{top_bloom_label}}</span>{{/top_bloom}}
+                        {{#top_bloom}}<span class="lid-bloom-badge">Bloom's L{{top_bloom}} -- {{top_bloom_label}}</span>{{/top_bloom}}
                     </div>
                 </div>
                 <div class="lid-student-actions">
@@ -181,7 +187,7 @@
                 </div>
             </div>
 
-            {{! Student forum LID card — primary analysis unit }}
+            {{! Student forum LID card -- primary analysis unit }}
             {{#has_student_lid}}
             <div class="lid-student-lid-preview">
                 {{{student_html}}}
@@ -204,7 +210,7 @@
 
 </div>
 
-{{! ── Learner tab styling ────────────────────────────────────────────── }}
+{{! -- Learner tab styling ------------------------------------------------ }}
 <style>
 /* Wrapping tab bar for learner tabs */
 .lid-forum-tabs {

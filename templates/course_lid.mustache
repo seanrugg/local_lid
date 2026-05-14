@@ -2,20 +2,27 @@
     Course LID report page.
     Context: see classes/output/course_lid_page.php::export_for_template()
     Analysis cards arrive as pre-rendered HTML in aggregate_html and
-    forums[].analysis_html — output with triple brackets to avoid escaping.
+    forums[].analysis_html -- output with triple brackets to avoid escaping.
+
+    use_native_theme     bool     -- true if native Moodle theme mode is enabled
 }}
-{{> local_lid/lid_styles}}
+{{#use_native_theme}}
+    {{> local_lid/lid_styles_native}}
+{{/use_native_theme}}
+{{^use_native_theme}}
+    {{> local_lid/lid_styles}}
+{{/use_native_theme}}
 
 <div class="lid-page lid-page-course">
 
-    {{! ── Page header ─────────────────────────────────────────────────── }}
+    {{! -- Page header ----------------------------------------------------- }}
     <div class="lid-page-header">
         <div class="lid-page-header-left">
             <h2 class="lid-heading">{{#str}}dashboard_course_title, local_lid{{/str}}</h2>
             <div class="lid-mono lid-muted" style="font-size:10px;margin-top:4px">
                 {{coursename}}
                 {{#last_updated}}
-                <span class="lid-sep">·</span>
+                <span class="lid-sep">&middot;</span>
                 {{#str}}dashboard_last_updated, local_lid, {{last_updated}}{{/str}}
                 {{/last_updated}}
             </div>
@@ -31,23 +38,23 @@
         {{/can_trigger}}
     </div>
 
-    {{! ── Notices ─────────────────────────────────────────────────────── }}
+    {{! -- Notices --------------------------------------------------------- }}
     {{#stale_notice}}
     <div class="lid-notice lid-notice-warn">
         {{#str}}dashboard_stale_notice, local_lid{{/str}}
     </div>
     {{/stale_notice}}
 
-    {{! ── No forums empty state ───────────────────────────────────────── }}
+    {{! -- No forums empty state ------------------------------------------- }}
     {{^haslid}}
     <div class="lid-empty-state">
-        <div class="lid-empty-icon">📊</div>
+        <div class="lid-empty-icon">&#x1F4CA;</div>
         <div class="lid-empty-title">No data yet</div>
         <div class="lid-empty-desc">{{noforums_notice}}</div>
     </div>
     {{/haslid}}
 
-    {{! ── Dashboard content ───────────────────────────────────────────── }}
+    {{! -- Dashboard content ----------------------------------------------- }}
     {{#haslid}}
 
     {{! Tab bar }}
@@ -100,7 +107,7 @@
                 {{/error_count}}
             </div>
             <a href="{{view_url}}" class="lid-btn lid-btn-secondary" style="font-size:10px">
-                {{#str}}nav_forumdashboard, local_lid{{/str}} →
+                {{#str}}nav_forumdashboard, local_lid{{/str}} &rarr;
             </a>
         </div>
 
