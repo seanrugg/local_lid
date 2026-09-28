@@ -74,7 +74,7 @@ All settings are at **Site Administration → Plugins → Local plugins → Lear
 | Setting | Description |
 |---|---|
 | LLM API endpoint | URL of the LLM API (e.g. `https://api.anthropic.com/v1/messages`) |
-| LLM API key | Stored encrypted in the Moodle database |
+| LLM API key | Masked in the admin UI; stored in plaintext in the Moodle database
 | LLM model string | Model identifier passed in API requests |
 | Prompt template | The session analyzer prompt sent to the LLM. Editable via textarea or `.md` file upload. Pre-populated with the LID v1.0 default prompt on install. |
 | Lock prompt | When enabled, teachers can view but not edit the prompt at course or forum level |
