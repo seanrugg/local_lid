@@ -69,7 +69,7 @@ $string['settings_llm_endpoint']         = 'LLM API endpoint';
 $string['settings_llm_endpoint_desc']    = 'The full URL of the LLM API endpoint. Example: <code>https://api.anthropic.com/v1/messages</code>';
 
 $string['settings_llm_apikey']           = 'API key';
-$string['settings_llm_apikey_desc']      = 'Your LLM provider API key. Stored encrypted in the Moodle database. Leave blank to keep the existing key.';
+$string['settings_llm_apikey_desc']      = 'Your LLM provider API key. Masked in the admin UI but stored in plaintext in the Moodle database. Leave blank to keep the existing key.';
 
 $string['settings_llm_model']            = 'Model';
 $string['settings_llm_model_desc']       = 'The model identifier passed in API requests. Example: <code>gemini-2.5-flash</code>';
