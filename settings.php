@@ -119,10 +119,9 @@ if ($hassiteconfig) {
         60            // Input size (display width).
     ));
 
-    // API key - stored as a password field so it is masked in the UI.
-    // We do NOT use admin_setting_configpasswordunmask because we want to
-    // encrypt the value at rest using Moodle's encrypt_to_db helper.
-    // The actual encryption/decryption is handled in classes/llm/client.php.
+// API key - uses admin_setting_configpasswordunmask so the value is masked
+// in the admin UI. NOTE: the key is stored in plaintext in config_plugins;
+// it is not encrypted at rest. Protect it through database access controls.
     $settings->add(new admin_setting_configpasswordunmask(
         'local_lid/llm_apikey',
         new lang_string('settings_llm_apikey', 'local_lid'),
