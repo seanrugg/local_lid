@@ -37,7 +37,7 @@
         <FIELD NAME="llm_endpoint" TYPE="char" LENGTH="512" NOTNULL="false"
                COMMENT="LLM API endpoint URL; inherits from site level when null at course level"/>
         <FIELD NAME="llm_apikey" TYPE="char" LENGTH="512" NOTNULL="false"
-               COMMENT="Encrypted LLM API key; inherits from site level when null at course level"/>
+               COMMENT="LLM API key (plaintext); inherits from site level when null at course level"/>
         <FIELD NAME="llm_model" TYPE="char" LENGTH="128" NOTNULL="false"
                COMMENT="Model string passed in API request body (e.g. claude-sonnet-4-6)"/>
         <FIELD NAME="llm_maxtokens" TYPE="int" LENGTH="6" NOTNULL="false" DEFAULT="4096"
