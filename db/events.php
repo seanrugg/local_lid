@@ -64,7 +64,7 @@
  * Note on Moodle 4.5 vs 5.x compatibility:
  *   Both events used here (\mod_forum\event\post_created and
  *   \mod_forum\event\discussion_locked) have been available since Moodle
- *   3.x and are present on both 4.5 LTS and 5.1. The observer pattern
+ *   3.x and are present on 4.5 LTS through 5.3. The observer pattern
  *   remains fully supported. No version branching is required.
  *
  * @package    local_lid

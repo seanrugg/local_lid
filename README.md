@@ -2,7 +2,7 @@
 
 A Moodle local plugin that brings the [Learning Intelligence Dashboard](https://github.com/your-org/learning-intelligence-dashboard) into Moodle forum activities, surfacing structured competency evidence, Bloom's Taxonomy progression, and ROI metrics from student discussion contributions.
 
-**Moodle compatibility:** 4.5 LTS, 5.0, 5.1+  
+**Moodle compatibility:** 4.5 LTS, 5.0, 5.1, 5.2, 5.3  
 **LID Schema:** v1.0  
 **License:** GPL v3  
 **Status:** Alpha — active development
@@ -37,7 +37,7 @@ Aggregate dashboards (forum-level, student-level, course-level) are computed by 
 
 ## Requirements
 
-- Moodle 4.5 LTS or higher (tested on 5.1)
+- Moodle 4.5 LTS or higher (tested on 5.1; supported through 5.3)
 - PHP 8.1+
 - Access to an LLM API endpoint that accepts the session analyzer prompt and returns LID Schema v1.0 JSON (tested with Claude via the Anthropic API; compatible with any OpenAI-compatible endpoint)
 - `curl` enabled in PHP

@@ -4,7 +4,7 @@
 
 | Requirement | Minimum | Recommended |
 |---|---|---|
-| Moodle | 4.5 LTS | 5.1+ |
+| Moodle | 4.5 LTS | 5.3 |
 | PHP | 8.1 | 8.2+ |
 | MariaDB / MySQL | 10.6 | 10.11+ |
 | PHP extensions | curl, json, mbstring | All Moodle-required extensions |

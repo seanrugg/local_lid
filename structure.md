@@ -5,7 +5,7 @@
 **Suggested GitHub path:** `your-org/local_lid`  
 **Moodle install path:** `{moodleroot}/local/lid/`  
 **License:** GPL v3  
-**Moodle compatibility:** 4.5 LTS, 5.0, 5.1+  
+**Moodle compatibility:** 4.5 LTS, 5.0, 5.1, 5.2, 5.3  
 **Schema compatibility:** LID Schema v1.0 (session-analyzer-prompt.md)
 
 ---
@@ -332,4 +332,4 @@ $plugin->release      = '0.1.0';
 ---
 
 *Generated for the `local_lid` Learning Intelligence Dashboard Moodle plugin project.*  
-*LID Schema v1.0 · Moodle 4.5 LTS – 5.1+ · GPL v3*
+*LID Schema v1.0 · Moodle 4.5 LTS – 5.3 · GPL v3*
