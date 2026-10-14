@@ -702,8 +702,9 @@ define(['core/ajax', 'core/notification', 'core/str'], function(Ajax, Notificati
     /**
      * Update a .lid-status-badge element to reflect a new status.
      *
-     * Replaces the status class and updates the visible text in-place.
-     * String keys match the lang strings in local_lid.php.
+     * Detects whether the page is in native theme mode (Bootstrap 4) or
+     * futuristic mode and applies the appropriate class names. String keys
+     * match the lang strings in local_lid.php.
      *
      * @param {Element} el
      * @param {string}  status  One of: pending, processing, complete, error.
@@ -720,22 +721,56 @@ define(['core/ajax', 'core/notification', 'core/str'], function(Ajax, Notificati
             error:      'Error',
         };
 
-        ['pending', 'processing', 'complete', 'error'].forEach(function(s) {
-            el.classList.remove('lid-status-' + s);
-        });
-        el.classList.add('lid-status-' + status);
+        // Detect native theme mode -- Bootstrap 4 uses badge classes.
+        var isNative = el.classList.contains('badge');
 
-        // Preserve the spinner span for processing state.
-        var spinner = el.querySelector('.lid-status-spinner');
-        if (status === 'processing') {
-            if (!spinner) {
-                spinner = document.createElement('span');
-                spinner.className = 'lid-status-spinner';
+        if (isNative) {
+            // Native mode: use Bootstrap badge classes.
+            ['badge-secondary', 'badge-info', 'badge-success', 'badge-danger'].forEach(function(cls) {
+                el.classList.remove(cls);
+            });
+
+            var badgeClass = {
+                pending:    'badge-secondary',
+                processing: 'badge-info',
+                complete:   'badge-success',
+                error:      'badge-danger',
+            }[status] || 'badge-secondary';
+
+            el.classList.add(badgeClass);
+
+            // Remove any futuristic spinner, add Bootstrap spinner if needed.
+            var oldSpinner = el.querySelector('.lid-status-spinner');
+            if (oldSpinner) {
+                oldSpinner.remove();
+            }
+
+            if (status === 'processing') {
+                var spinner = document.createElement('span');
+                spinner.className = 'spinner-border spinner-border-sm mr-1';
+                spinner.setAttribute('role', 'status');
                 spinner.setAttribute('aria-hidden', 'true');
                 el.prepend(spinner);
             }
-        } else if (spinner) {
-            spinner.remove();
+        } else {
+            // Futuristic mode: use lid-status-* classes.
+            ['pending', 'processing', 'complete', 'error'].forEach(function(s) {
+                el.classList.remove('lid-status-' + s);
+            });
+            el.classList.add('lid-status-' + status);
+
+            // Preserve the spinner span for processing state.
+            var spinner = el.querySelector('.lid-status-spinner');
+            if (status === 'processing') {
+                if (!spinner) {
+                    spinner = document.createElement('span');
+                    spinner.className = 'lid-status-spinner';
+                    spinner.setAttribute('aria-hidden', 'true');
+                    el.prepend(spinner);
+                }
+            } else if (spinner) {
+                spinner.remove();
+            }
         }
 
         // Update the text node (last child after optional spinner).
@@ -749,13 +784,20 @@ define(['core/ajax', 'core/notification', 'core/str'], function(Ajax, Notificati
     }
 
     /**
-     * Update all .lid-status-badge elements on the page to a given status.
+     * Update all status badge elements on the page to a given status.
      * Used after a forum-wide trigger to mark all posts as pending.
+     *
+     * Handles both futuristic (.lid-status-badge) and native (.badge) selectors.
      *
      * @param {string} status
      */
     function updateAllPostStatusBadges(status) {
+        // Futuristic mode badges.
         document.querySelectorAll('.lid-status-badge').forEach(function(el) {
+            setStatusBadge(el, status);
+        });
+        // Native mode badges.
+        document.querySelectorAll('.lid-post-row .badge').forEach(function(el) {
             setStatusBadge(el, status);
         });
     }

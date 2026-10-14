@@ -102,4 +102,27 @@
         grid-template-columns: repeat(2, 1fr);
     }
 }
+
+/* CSS variables for JS color references -- used by dashboard.js and
+   forum_config.js for radar charts, engagement bars, toast notifications,
+   and model option styling. These ensure consistent colors across both
+   theme modes. */
+:root {
+    --lid-accent:   #00e5ff;
+    --lid-accent2:  #7b61ff;
+    --lid-accent3:  #00ff9d;
+    --lid-warn:     #ff6b35;
+    --lid-border:   #1e2d44;
+    --lid-dim:      #2a3d58;
+    --lid-muted:    #5a7090;
+    --lid-surface2: #0e1520; /* Used by forum_config.js for model option backgrounds */
+}
+
+/* Portfolio format badge colors -- custom values that Bootstrap doesn't
+   provide natively. Map LID's semantic color names to Bootstrap-compatible
+   badge colors. */
+.badge-cyan   { background: var(--lid-accent, #00e5ff); color: #0a0e14; }
+.badge-purple { background: var(--lid-accent2, #7b61ff); color: #fff; }
+.badge-green  { background: var(--lid-accent3, #00ff9d); color: #0a0e14; }
+.badge-orange { background: var(--lid-warn, #ff6b35); color: #fff; }
 </style>
