@@ -80,6 +80,9 @@ $string['settings_llm_maxtokens_desc']   = 'Maximum output tokens requested per 
 $string['settings_llm_timeout']          = 'Request timeout (seconds)';
 $string['settings_llm_timeout_desc']     = 'HTTP timeout for LLM API requests in seconds. Default: 60. Increase for slow endpoints or large forum threads.';
 
+$string['settings_llm_use_ai_provider']  = 'Use site AI provider instances';
+$string['settings_llm_use_ai_provider_desc'] = 'When enabled, the LLM API endpoint and key will be inherited from the AI provider instances configured in <a href="{$a}">Site Administration → Plugins → AI providers</a>. This allows central management of API credentials. If no valid provider instance is found, the plugin falls back to the manual endpoint and key configured below. This setting has no effect if the AI providers plugin is not installed.';
+
 // ---------------------------------------------------------------------------
 // Admin settings — prompt template
 // ---------------------------------------------------------------------------

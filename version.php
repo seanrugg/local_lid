@@ -25,8 +25,8 @@
 defined('MOODLE_INTERNAL') || die();
 
 $plugin->component = 'local_lid';
-$plugin->version   = 2026101100;  // YYYYMMDDNN - Oct 11, 2026
-$plugin->release   = '0.10.0';    // Moodle 5.2 / 5.3 support
+$plugin->version   = 2026101400;  // YYYYMMDDNN - Oct 14, 2026
+$plugin->release   = '0.10.1';    // Moodle 5.2 / 5.3 support
 $plugin->requires  = 2024042200;  // Moodle 5.0
 $plugin->supported = [405, 500, 501, 502, 503]; // Moodle 4.5 LTS – 5.3
 $plugin->maturity  = MATURITY_STABLE;

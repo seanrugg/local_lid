@@ -162,6 +162,15 @@ if ($hassiteconfig) {
         6
     ));
 
+    // Use site AI provider instances (inherit endpoint/key from tool_adminai).
+    $settings->add(new admin_setting_configcheckbox(
+        'local_lid/llm_use_ai_provider',
+        new lang_string('settings_llm_use_ai_provider', 'local_lid'),
+        new lang_string('settings_llm_use_ai_provider_desc',
+            new \moodle_url('/admin/settings.php?section=manageaiproviders')),
+        '0'           // Default: disabled (manual configuration).
+    ));
+
     // =========================================================================
     // SECTION 3 - Prompt template
     // =========================================================================

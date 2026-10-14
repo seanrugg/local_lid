@@ -63,11 +63,18 @@ class client {
     /**
      * Constructor. Reads configuration and validates required settings.
      *
+     * Credentials are resolved via provider_resolver, which supports inheritance
+     * from Moodle's site-wide AI provider instances (tool_adminai) when enabled.
+     * Falls back to manual endpoint/key configuration otherwise.
+     *
      * @throws \local_lid\exception\llm_config_exception If endpoint or API key not set.
      */
     public function __construct() {
-        $this->endpoint  = (string) get_config('local_lid', 'llm_endpoint');
-        $this->apikey    = (string) get_config('local_lid', 'llm_apikey');
+        // Resolve credentials (endpoint + API key) via the provider resolver.
+        $credentials = \local_lid\llm\provider_resolver::resolve_credentials();
+        $this->endpoint = $credentials['endpoint'];
+        $this->apikey   = $credentials['apikey'];
+
         $this->model     = (string) get_config('local_lid', 'llm_model');
         $this->maxtokens = (int)    get_config('local_lid', 'llm_maxtokens') ?: 4096;
         $this->timeout   = 120;
