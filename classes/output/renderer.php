@@ -256,7 +256,8 @@ class renderer extends \plugin_renderer_base {
             'session_source_type' => $session['source_type']                 ?? '',
             'session_duration'    => (int) ($session['duration_minutes']     ?? 0),
             'session_summary'     => format_string($session['topic_summary'] ?? ''),
-            'session_tags'        => $this->prepare_tags($session['tags']    ?? []),
+            // Session tags -- apply cap with overflow indicator.
+            'session_tags'        => $this->prepare_session_tags($session),
 
             // Scores block.
             'cognitive_depth'    => (int) ($scores['cognitive_depth_score']    ?? 0),
@@ -706,14 +707,83 @@ class renderer extends \plugin_renderer_base {
         return $result;
     }
 
+    /** Maximum number of session tags to display before truncating. */
+    private const MAX_SESSION_TAGS = 10;
+
     /**
-     * Prepare a tags array into template-friendly format.
+     * Normalize a tag string for deduplication comparison.
      *
-     * @param  array $tags
+     * Pipeline: split camelCase → replace hyphens/underscores with spaces →
+     * collapse whitespace → lowercase → trim.
+     *
+     * @param  string $tag
+     * @return string Normalized form (empty string if no content remains).
+     */
+    private function normalize_tag(string $tag): string {
+        // Split camelCase: "MilitaryModernization" → "Military Modernization"
+        $tag = preg_replace('/(?<=[a-z])(?=[A-Z])/', ' ', trim($tag));
+        // Replace hyphens and underscores with spaces
+        $tag = str_replace(['-', '_'], ' ', $tag);
+        // Collapse whitespace
+        $tag = preg_replace('/\s+/', ' ', $tag);
+        // Lowercase and trim
+        return \core_text::strtolower(trim($tag));
+    }
+
+    /**
+     * Prepare a tags array into template-friendly format with normalization
+     * and deduplication.
+     *
+     * Tags are normalized (camelCase split, hyphens/underscores replaced,
+     * whitespace collapsed, lowercased) and deduplicated by normalized form.
+     * The original form is preserved for display.
+     *
+     * NOTE: This function does NOT apply a cap. Callers that need capping
+     * (e.g., session_tags) should apply it after this call.
+     *
+     * @param  array  $tags Raw tag strings.
      * @return array  Array of ['tag' => string] objects.
      */
     private function prepare_tags(array $tags): array {
-        return array_map(fn($t) => ['tag' => format_string((string) $t)], $tags);
+        $normalized = [];
+        $seen       = [];
+
+        foreach ($tags as $t) {
+            $raw = (string) $t;
+            if ($raw === '') {
+                continue;
+            }
+            $norm = $this->normalize_tag($raw);
+            if ($norm === '' || isset($seen[$norm])) {
+                continue;
+            }
+            $seen[$norm] = true;
+            $normalized[] = ['tag' => format_string($raw)];
+        }
+
+        return $normalized;
+    }
+
+    /**
+     * Prepare session tags with normalization, deduplication, and overflow cap.
+     *
+     * Applies a cap (MAX_SESSION_TAGS) and appends an overflow indicator
+     * when the tag count exceeds the cap. This is a wrapper around
+     * prepare_tags() for the session_tags call site only.
+     *
+     * @param  array $session Session data with 'tags' key.
+     * @return array
+     */
+    private function prepare_session_tags(array $session): array {
+        $tags = $this->prepare_tags($session['tags'] ?? []);
+        if (count($tags) > self::MAX_SESSION_TAGS) {
+            $tags = array_slice($tags, 0, self::MAX_SESSION_TAGS);
+            $tags[] = [
+                'is_overflow'  => true,
+                'hidden_count' => count($this->prepare_tags($session['tags'] ?? [])) - self::MAX_SESSION_TAGS,
+            ];
+        }
+        return $tags;
     }
 
     /**

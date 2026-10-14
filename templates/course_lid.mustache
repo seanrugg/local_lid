@@ -71,9 +71,11 @@
                 aria-controls="lid-panel-forum-{{forumid}}"
                 data-target="lid-panel-forum-{{forumid}}">
             {{forumname}}
+            {{#post_count}}
             <span class="lid-tab-badge{{#pending_count}} lid-tab-badge-warn{{/pending_count}}{{#error_count}} lid-tab-badge-error{{/error_count}}">
-                {{post_count}}
+                {{post_count}}<span class="visually-hidden"> {{#str}}tab_learners_analysed, local_lid{{/str}}</span>
             </span>
+            {{/post_count}}
         </button>
         {{/forums}}
     </div>

@@ -24,7 +24,12 @@
         <div class="lid-session-footer">
             <span class="lid-mono lid-muted">~{{session_duration}} min</span>
             {{#session_tags}}
-                <span class="lid-tag lid-tag-cyan">{{tag}}</span>
+                {{#is_overflow}}
+                    <span class="lid-tag lid-tag-muted">{{#str}}lid_tag_more, local_lid, {{hidden_count}}{{/str}}</span>
+                {{/is_overflow}}
+                {{^is_overflow}}
+                    <span class="lid-tag lid-tag-cyan">{{tag}}</span>
+                {{/is_overflow}}
             {{/session_tags}}
         </div>
     </div>

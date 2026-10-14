@@ -177,7 +177,7 @@ class course_lid_page implements \renderable, \templatable {
                 'cmid'          => (int) $cm->id,
                 'analysis_html' => $analysishtml,
                 'has_analysis'  => !empty($forumanalysis),
-                'post_count'    => $counts['complete'],
+                'post_count'    => $counts['complete'] ?: null,
                 'pending_count' => $counts['pending'],
                 'error_count'   => $counts['error'],
                 'view_url'      => (new \moodle_url('/local/lid/forum_view.php', [
@@ -218,7 +218,7 @@ class course_lid_page implements \renderable, \templatable {
 
         foreach ($statuses as $status) {
             $n = $DB->count_records('local_lid_analysis', [
-                'scope'    => 'post',
+                'scope'    => 'student_forum',
                 'forumid'  => $forumid,
                 'courseid' => $courseid,
                 'status'   => $status,
