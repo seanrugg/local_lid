@@ -372,7 +372,8 @@ define(['core/ajax', 'core/notification', 'core/str'], function(Ajax, Notificati
     /**
      * Animate competency bar fills from 0 to their target width.
      *
-     * Each .lid-comp-bar-fill carries its target width as a data-width
+     * Each .lid-comp-bar-fill (futuristic) or .lid-native-bar-animated
+     * (native Bootstrap .progress-bar) carries its target width as a data-width
      * attribute (set by the PHP renderer). The bar starts at width:0 in CSS
      * and is animated to its target once it enters the viewport.
      *
@@ -383,7 +384,8 @@ define(['core/ajax', 'core/notification', 'core/str'], function(Ajax, Notificati
     function initCompetencyBars(scope) {
         scope = scope || document;
         var bars = Array.from(
-            scope.querySelectorAll('.lid-comp-bar-fill:not([data-lid-animated])')
+            scope.querySelectorAll('.lid-comp-bar-fill:not([data-lid-animated]), ' +
+                '.lid-native-bar-animated:not([data-lid-animated])')
         );
 
         if (!bars.length) {
