@@ -119,9 +119,9 @@ if ($hassiteconfig) {
         60            // Input size (display width).
     ));
 
-// API key - uses admin_setting_configpasswordunmask so the value is masked
-// in the admin UI. NOTE: the key is stored in plaintext in config_plugins;
-// it is not encrypted at rest. Protect it through database access controls.
+    // API key - uses admin_setting_configpasswordunmask so the value is masked
+    // in the admin UI. NOTE: the key is stored in plaintext in config_plugins;
+    // it is not encrypted at rest. Protect it through database access controls.
     $settings->add(new admin_setting_configpasswordunmask(
         'local_lid/llm_apikey',
         new lang_string('settings_llm_apikey', 'local_lid'),
@@ -162,12 +162,14 @@ if ($hassiteconfig) {
         6
     ));
 
-    // Use site AI provider instances (inherit endpoint/key from tool_adminai).
+    // Use site AI provider instances (inherit endpoint/key from the core AI
+    // subsystem, core_ai, configured under Site administration -> General -> AI).
+    // The description string takes the AI providers admin page URL as {$a}.
+    $aiproviderurl = (new \moodle_url('/admin/settings.php', ['section' => 'aiprovider']))->out(false);
     $settings->add(new admin_setting_configcheckbox(
         'local_lid/llm_use_ai_provider',
         new lang_string('settings_llm_use_ai_provider', 'local_lid'),
-        new lang_string('settings_llm_use_ai_provider_desc',
-            new \moodle_url('/admin/settings.php?section=manageaiproviders')),
+        new lang_string('settings_llm_use_ai_provider_desc', 'local_lid', $aiproviderurl),
         '0'           // Default: disabled (manual configuration).
     ));
 
